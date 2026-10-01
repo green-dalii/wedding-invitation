@@ -1,0 +1,60 @@
+name: Bug 报告
+description: 报告页面或构建中的问题
+labels: [bug]
+body:
+  - type: input
+    id: url
+    attributes:
+      label: 页面地址
+      description: 出现问题的页面 URL（本地地址或线上地址均可）
+      placeholder: https://example.com 或 http://localhost:5173
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node 版本
+      description: 运行 `node -v` 的输出
+      placeholder: v20.x.x
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: 浏览器 / 设备
+      description: 浏览器及版本、设备型号（移动端问题请注明系统）
+      placeholder: iOS 18 / WeChat 8.x，或 Chrome 130 / macOS
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 如何一步步触发这个问题
+      placeholder: |
+        1. 打开首页
+        2. 按住 Hero 区拖动
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 你认为应该发生什么
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 实际发生了什么（附控制台报错更有帮助）
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图（可选）
+      description: 如有助于说明问题请附上
+    validations:
+      required: false

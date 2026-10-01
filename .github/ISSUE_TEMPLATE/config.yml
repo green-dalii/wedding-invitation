@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Bug 报告
+    url: https://github.com/<YOUR_USERNAME>/wedding-invitation/discussions
+    about: 讨论与问答请前往 Discussions（Bug 请使用 Bug 报告模板提交 Issue）
+  - name: 功能建议
+    url: https://github.com/<YOUR_USERNAME>/wedding-invitation/discussions
+    about: 想先聊聊想法？欢迎到 Discussions 发起讨论

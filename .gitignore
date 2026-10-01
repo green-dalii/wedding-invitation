@@ -1,0 +1,37 @@
+# 依赖与构建产物
+node_modules
+dist
+.vite
+
+# ⚠️ 真实请柬信息（姓名/地址/时间/坐标）—— 绝不入库
+.env
+.env.*
+!.env.example
+site.local.ts
+site.local.json
+
+# 系统与编辑器
+.DS_Store
+*.log
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# 原始素材（含私人照片，体积大）
+assets-src/*
+!assets-src/.gitkeep
+
+# 由 assets-src/hero-source.jpg 派生的产物（含照片本身）。
+# 仓库只保留源码；`npm install` 会自动生成**占位图**（prepare 脚本），
+# 使用者放入真实照片后运行 `npm run assets:hero` 生成**本地产物**，不入库。
+src/assets/
+public/og.jpg
+src/generated/
+
+# Cloudflare 本地开发密钥（绝不入库）
+.dev.vars
+.dev.vars.*
+.wrangler/
+
+# E2E 产物
+e2e-artifacts/

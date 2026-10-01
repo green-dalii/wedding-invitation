@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN" class="locked">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#e9e7e1">
+<meta name="format-detection" content="telephone=no">
+<title>__TITLE__</title>
+<meta name="description" content="__DESC__">
+<meta property="og:title" content="__TITLE__">
+<meta property="og:description" content="__DESC__">
+<meta property="og:type" content="website">
+<meta property="og:url" content="__SITE_URL__">
+<meta property="og:image" content="__OG_IMAGE__">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  /* 首屏关键样式（loader 立即可见、无 FOUC）；完整样式见 style.css */
+  html, body { margin: 0; background: #e9e7e1; }
+  #loader {
+    position: fixed; inset: 0; z-index: 60;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+    background: #e9e7e1; color: #6b6f68;
+    transition: opacity .3s ease, visibility .3s;
+    font-family: "Noto Serif SC", "Songti SC", "STSong", serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  #loader.done { opacity: 0; visibility: hidden; pointer-events: none; }
+  #loader .l-mark { font-size: 34px; color: #4f7a60; letter-spacing: .12em; }
+  #loader .l-bar { width: min(210px, 52vw); height: 2px; background: rgba(58,61,56,.16); overflow: hidden; }
+  #loader .l-bar i { display: block; height: 100%; width: 0; background: #6f9a7d; transition: width .18s ease; }
+  #loader .l-pct { font-size: 11px; letter-spacing: .22em; color: #9a9c94; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="loader" aria-hidden="true">
+  <div class="l-mark">囍</div>
+  <div class="l-bar"><i></i></div>
+  <div class="l-pct">0%</div>
+</div>
+<main>
+  <section id="hero" aria-label="婚礼请柬封面">
+    <div class="hero-photo" style="background-image:url(__LQIP__)">
+      <canvas></canvas>
+      <div class="hero-scrim"></div>
+      <p class="hint">哈哈镜~来戳我</p>
+    </div>
+    <div class="hero-copy"></div>
+  </section>
+  <div id="details"></div>
+  <button class="back-top" type="button" aria-label="回到封面">↑</button>
+</main>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# Cloudflare Pages 路由规则
+#
+# 面板页：构建为 dashboard/index.html。
+# 不带尾斜杠的 /dashboard 在部分环境会落到主站点的 SPA 回退，
+# 故显式规范化。注意：**不要写 /dashboard/* 通配规则**，
+# 它会把 /dashboard/ 自身也匹配进去造成 301 自环。
+#
+# /tune：**刻意不写任何规则**。Pages 对无静态文件的路径走 SPA 回退，
+# 直接返回主页面且**浏览器 URL 保持 /tune 不变**（200，不重定向），
+# 因此前端可用 location.pathname 唤醒调参面板。
+# 若加 200 重写，wrangler/Pages 会把它规范化为 308 → /，
+# 导致浏览器 URL 变成 /，路径判断随之失效。
+#
+# ⚠️ 推论：若你的托管平台会对未知路径做 301 到 /index.html 的
+#    「规范化」而非 200 回退，请改用 /?tune 查询参数触发面板。
+
+/dashboard    /dashboard/    301

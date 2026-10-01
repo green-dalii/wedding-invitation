@@ -1,0 +1,41 @@
+{
+  "name": "wedding-invitation",
+  "version": "1.0.0",
+  "description": "移动端优先的电子婚礼请柬模板：Hero 区软胶物理按压形变（粘弹双模 + 蠕变），配置全环境变量驱动，首屏 JS ≈12.6KB gzip。",
+  "keywords": [
+    "wedding",
+    "invitation",
+    "wedding-invitation",
+    "template",
+    "webgl",
+    "soft-body",
+    "cloudflare-pages",
+    "vite",
+    "typescript"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "prepare": "node scripts/make-placeholder.mjs && node scripts/optimize-hero.mjs",
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "test": "vitest run",
+    "assets:placeholder": "node scripts/make-placeholder.mjs",
+    "assets:hero": "node scripts/optimize-hero.mjs",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "playwright-core": "^1.63.0",
+    "sharp": "^0.35.5",
+    "solarlunar": "^3.1.0",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.1",
+    "vitest": "^4.0.0"
+  }
+}

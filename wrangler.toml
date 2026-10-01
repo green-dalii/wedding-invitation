@@ -1,0 +1,18 @@
+name = "wedding-invitation"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "dist"
+
+# D1 绑定。用 `npx wrangler d1 create wedding` 创建后，
+# 把返回的 database_id 填到下面。
+[[d1_databases]]
+binding = "DB"
+database_name = "wedding"
+database_id = "在此填入你的 D1 database_id"
+migrations_dir = "migrations"
+
+# 面板密码与会话密钥**不是** VITE_ 前缀，因此不会进入客户端 bundle。
+# 在 Pages Dashboard → Settings → Environment variables → Encrypt 中配置：
+#   DASHBOARD_PASSWORD = 你的面板密码
+#   SESSION_SECRET     = openssl rand -hex 32 的输出
+# 不要写进 [vars]，那样会进仓库。
