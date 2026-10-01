@@ -7,7 +7,7 @@
  *  - 三档齐备：缺 -m.jpg 时老 WebView 会白屏
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, readFileSync } from 'node:fs';
 import manifest from '../src/generated/gallery.json';
 
 const M = manifest.images;
@@ -72,6 +72,22 @@ describe('相册产物', () => {
     // 旧的单图管线产物若残留，会与 gallery-01 重复打包
     for (const stale of ['hero-m.webp', 'hero-l.webp', 'hero-m.jpg']) {
       expect(existsSync(`src/assets/${stale}`), `应清理 src/assets/${stale}`).toBe(false);
+    }
+  });
+
+  it('焦点表（若存在）只引用真实存在的源图', () => {
+    const FOCAL = 'assets-src/gallery-focal.json';
+    if (!existsSync(FOCAL)) return; // 未自定义构图时该文件不存在
+    const focals = JSON.parse(readFileSync(FOCAL, 'utf8')) as Record<string, number[]>;
+    // 拼错文件名会静默失效（回退默认焦点），所以这里必须当头一棒
+    for (const [stem, xy] of Object.entries(focals)) {
+      expect(
+        existsSync(`assets-src/gallery/${stem}.jpg`) || existsSync(`assets-src/${stem}.jpg`),
+        `焦点表里的 "${stem}" 找不到对应源图`
+      ).toBe(true);
+      expect(Array.isArray(xy) && xy.length === 2, `${stem} 的焦点应为 [x, y]`).toBe(true);
+      expect(xy[0]).toBeGreaterThanOrEqual(0);
+      expect(xy[0]).toBeLessThanOrEqual(1);
     }
   });
 });

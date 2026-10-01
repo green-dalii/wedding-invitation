@@ -21,6 +21,7 @@ SECRETS=(
   ".env"                        # 真实姓名 / 坐标 / 航班 / 高德 key
   "assets-src/hero-source.jpg"  # 真实照片（第 1 张，也是 og.jpg 来源）
   "assets-src/gallery"          # 真实相册（后续各张，按文件名排序）
+  "assets-src/gallery-focal.json" # 逐张构图焦点（不拷的话线上会用默认焦点，与本地不一致）
   "wrangler.toml"               # 真实 D1 database_id
 )
 
