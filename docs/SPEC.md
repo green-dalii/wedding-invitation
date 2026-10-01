@@ -285,7 +285,8 @@ web/
 
 **指示器 / 播放按钮**：
 - `.hero-bar` 由 JS 插入 `.hero-photo` 内，位于 Hero 底部（`bottom: 15px + safe-area`）；`.hero-copy` 底部内边距相应加大到 50px 让位。
-- 圆点 8px，激活态拉伸为 20px 胶囊 + 莫兰迪红 `#b4656b`；用 `::after` 把可点区域撑到 44px（左右只扩 3px，避免相邻重叠）。
+- 圆点 8px，激活态拉伸为 20px 胶囊 + **主题绿 `var(--green)`**（与站内「&」分隔符、chip、按钮描边同色）；用 `::after` 把可点区域撑到 44px（左右只扩 3px，避免相邻重叠）。
+  （favicon 与 Loading 页的囍仍为莫兰迪红 `#b4656b`，那是「婚礼」点缀色；指示器属功能性 UI，跟随主题绿。）
 - 无障碍：`role="tablist"` + 每颗 `aria-label="第 N 张照片"` / `aria-selected`；`aria-pressed` / `aria-label` 随播放状态切换。
 - 只有一张图时**完全不显示**任何控件。
 - 诊断钩子：`window.__hero.gallery()` → `{ index, total, mix, fading, autoplay, pressing, canAdvance, visible, docVisible, log }`；`log` 记录每次切换触发原因。

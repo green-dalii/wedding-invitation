@@ -140,7 +140,8 @@ html:not(.locked) .hero-photo { touch-action: pan-y; }
 }
 .hero-dot.on {
   width: 20px;
-  background: #b4656b;
+  /* 主题绿（与站内 --green 一致：分隔符「&」、chip、按钮描边同色） */
+  background: var(--green);
 }
 .hero-play {
   display: flex;
