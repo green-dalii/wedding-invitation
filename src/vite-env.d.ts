@@ -27,8 +27,10 @@ interface ImportMetaEnv {
   readonly VITE_SITE_JSON?: string;
   /** 部署后的绝对地址，用于 og:url 与分享图 */
   readonly VITE_SITE_URL?: string;
-  /** 其他城市中转建议（如：昆明转动车） */
+  /** 其他城市中转建议，以「其他城市」卡片展示 */
   readonly VITE_TRANSIT_NOTE?: string;
+  /** 小贴士：阳光气候与顺路旅游建议 */
+  readonly VITE_TRAVEL_TIP?: string;
   /** 高德 JS API key（公开凭据，靠域名白名单限权） */
   readonly VITE_AMAP_KEY?: string;
   /** 高德 JS API 安全密钥（与 key 配套） */

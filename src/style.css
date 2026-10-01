@@ -620,3 +620,9 @@ textarea.inp { resize: vertical; min-height: 76px; line-height: 1.6; }
 .chip b { font-weight: 600; color: var(--ink); letter-spacing: .02em; }
 .chip i { font-style: normal; color: var(--ink-soft); font-size: 11px; }
 
+
+/* ── 回执成功：庆祝彩带（canvas 覆盖层，不拦截交互）───────────── */
+.confetti-layer {
+  position: fixed; inset: 0; z-index: 90;
+  pointer-events: none;   /* 绝不阻挡滚动与点击 */
+}

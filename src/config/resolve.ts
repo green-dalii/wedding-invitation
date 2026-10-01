@@ -34,6 +34,7 @@ const SCALAR_ENV: ReadonlyArray<readonly [string, readonly string[], 'string' | 
   ['VITE_HERO_FOCAL_Y', ['hero', 'focal', 'y'], 'number'],
   ['VITE_SITE_URL', ['siteUrl'], 'string'],
   ['VITE_TRANSIT_NOTE', ['transitNote'], 'string'],
+  ['VITE_TRAVEL_TIP', ['travelTip'], 'string'],
   ['VITE_AMAP_KEY', ['amap', 'key'], 'string'],
   ['VITE_AMAP_SECURITY_CODE', ['amap', 'securityCode'], 'string'],
 ];

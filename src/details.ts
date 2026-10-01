@@ -1,6 +1,7 @@
 /** 下方信息区（SPEC §9）：时间 / 地点 / 如何前往 / 流程 / 回执 / 结语。内容来自 site.config */
 import { site, copy } from './config';
 import { initAmapEmbed } from './amap';
+import { celebrate } from './confetti';
 
 /** 直达航班卡片（与「自驾」同款；仅当 VITE_FLIGHTS_JSON 有数据时渲染，SPEC §9） */
 function renderFlights(cities: import('./config/schema').FlightCity[]): string {
@@ -25,6 +26,18 @@ function renderTransit(note: string): string {
           <div>
             <h3>其他城市</h3>
             <p>${note}</p>
+          </div>
+        </div>`;
+}
+
+/** 小贴士（阳光气候 + 顺路旅游），置于交通之后（SPEC §9） */
+function renderTip(tip: string): string {
+  return `
+        <div class="get-item tip reveal">
+          <div class="ic">💡</div>
+          <div>
+            <h3>一点小贴士</h3>
+            <p>${tip}</p>
           </div>
         </div>`;
 }
@@ -90,6 +103,7 @@ export function renderDetails(root: HTMLElement): void {
         </div>`).join('')}
         ${site.flights.length ? renderFlights(site.flights) : ''}
         ${site.transitNote ? renderTransit(site.transitNote) : ''}
+        ${site.travelTip ? renderTip(site.travelTip) : ''}
       </div>
     </div>
   </section>
@@ -316,7 +330,7 @@ function initRsvp(root: HTMLElement): void {
 
       form.reset();
       if (num) num.value = '1';
-      // 仪式感：一笔勾 + 一句话收尾（克制，不做撒花）
+      // 仪式感：一笔勾 + 一句话收尾 + 彩带（克制：莫兰迪配色，非彩虹）
       const btn = form.querySelector<HTMLButtonElement>('.rsvp-submit');
       if (btn) {
         btn.classList.add('done');
@@ -325,6 +339,7 @@ function initRsvp(root: HTMLElement): void {
             <path d="M4.5 12.5l5 5 10-11" />
           </svg>
           <span>已收到，等你入席</span>`;
+        celebrate();
       }
       say('如需更改人数或行程，随时告诉我们。', true);
     } catch {

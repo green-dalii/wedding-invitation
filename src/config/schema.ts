@@ -84,6 +84,8 @@ export interface SiteConfig {
   flights: FlightCity[];
   /** 其他城市中转建议（为空则不渲染） */
   transitNote: string;
+  /** 小贴士：阳光与顺路旅游（为空则不渲染） */
+  travelTip: string;
   /** 高德地图嵌入凭据（未配置 key 时不渲染地图，只保留导航链接） */
   amap: AmapInfo;
   /** 部署后的绝对地址，用于 og:url / 微信分享图；本地留空 */
@@ -138,6 +140,7 @@ export const DEFAULTS: SiteConfig = {
   ],
   flights: [],
   transitNote: '',
+  travelTip: '',
   amap: { key: '', securityCode: '' },
   schedule: [
     { time: '11:00', title: '迎宾签到', text: '签到台领取伴手礼' },

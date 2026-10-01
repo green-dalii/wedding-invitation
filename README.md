@@ -78,6 +78,7 @@ VITE_SITE_URL=https://your-domain.example
 | `VITE_SCHEDULE_JSON` | JSON 数组 | `schedule` | 「当日流程」（整体替换） |
 | `VITE_FLIGHTS_JSON` | JSON 数组 | `flights` | 直达航班（城市+班期，以「飞机」卡片展示，可选） |
 | `VITE_TRANSIT_NOTE` | string | `transitNote` | 其他城市中转建议（「其他城市」卡片，可选） |
+| `VITE_TRAVEL_TIP` | string | `travelTip` | 小贴士：阳光气候 + 顺路旅游（可选 |
 | `VITE_AMAP_KEY` | string | `amap.key` | 高德 JS API key（可选，公开凭据，配域名白名单） |
 | `VITE_AMAP_SECURITY_CODE` | string | `amap.securityCode` | 与 key 配套的安全密钥（可选） |
 | `VITE_SITE_URL` | string | `siteUrl` | 部署绝对地址，og:url / 分享图 |
