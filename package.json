@@ -1,7 +1,7 @@
 {
   "name": "wedding-invitation",
   "version": "1.0.0",
-  "description": "移动端优先的电子婚礼请柬模板：Hero 区软胶物理按压形变（粘弹双模 + 蠕变），配置全环境变量驱动，首屏 JS ≈12.6KB gzip。",
+  "description": "移动端优先的电子婚礼请柬模板：Hero 区软胶物理按压形变（粘弹双模 + 蠕变）+ 相册轮播，配置全环境变量驱动。",
   "keywords": [
     "wedding",
     "invitation",
@@ -20,13 +20,13 @@
   },
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "prepare": "node scripts/make-placeholder.mjs && node scripts/optimize-hero.mjs",
+    "prepare": "node scripts/make-placeholder.mjs && node scripts/optimize-gallery.mjs",
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
     "test": "vitest run",
     "assets:placeholder": "node scripts/make-placeholder.mjs",
-    "assets:hero": "node scripts/optimize-hero.mjs",
+    "assets:gallery": "node scripts/optimize-gallery.mjs",
     "e2e": "node scripts/e2e.mjs"
   },
   "devDependencies": {

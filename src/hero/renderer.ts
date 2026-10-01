@@ -16,16 +16,36 @@ export interface RenderTuning {
 /** 默认渲染参数：集中管理于 hero.config.ts（HERO_RENDER） */
 export const DEFAULT_TUNING: RenderTuning = { ...HERO_RENDER };
 
-/** 极简 WebGL1 渲染器：1 张全屏三角形 + 2 张纹理。无三方依赖，覆盖 iOS 8+/Android 4.4+。 */
+/**
+ * 纹理单元分配（**不可随意改动**）：
+ *   0 = 当前图 uImg  1 = 高度场 uField  2 = 淡入目标图 uImgB
+ * 高度场固定在单元 1，第二张图必须另占单元 2，否则 uploadField 会把图覆盖掉。
+ * WebGL1 保证 MAX_TEXTURE_IMAGE_UNITS ≥ 8，用 3 个安全。
+ */
+const UNIT_CUR = 0;
+const UNIT_FIELD = 1;
+const UNIT_NEXT = 2;
+
+/**
+ * 极简 WebGL1 渲染器：1 张全屏三角形 + 3 张纹理。无三方依赖，覆盖 iOS 8+/Android 4.4+。
+ *
+ * 轮播用**双纹理乒乓**：永远只有 2 张图片纹理（无论相册多少张），
+ * 淡入结束后两者互换角色，旧图所在槽位直接作为下一次上传的目标。
+ */
 export class Renderer {
   private gl!: WebGLRenderingContext;
   private u!: Record<string, WebGLUniformLocation | null>;
-  private imgTex: WebGLTexture | null = null;
+  /** [当前槽, 备用槽] 的纹理对象；仅 2 个，乒乓复用 */
+  private slots: (WebGLTexture | null)[] = [null, null];
   private fieldTex: WebGLTexture | null = null;
   private fieldW = 0;
   private fieldH = 0;
   private lastField: Uint8Array | null = null;
+  /** 当前显示的图（用于上下文重建后重传） */
   private image: HTMLCanvasElement | null = null;
+  /** 备用槽里等待淡入的图 */
+  private pending: HTMLCanvasElement | null = null;
+  private mix = 0;
   lost = false;
   tuning: RenderTuning = { ...DEFAULT_TUNING };
   maxTextureSize = 2048;
@@ -66,7 +86,9 @@ export class Renderer {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.warn(gl.getProgramInfoLog(prog)); return false; }
     gl.useProgram(prog);
     this.u = {};
-    for (const n of ['uImg', 'uField', 'uRefract', 'uDisp', 'uLight', 'uZoom', 'uMaxSlope', 'uMaxH']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uImg', 'uField', 'uImgB', 'uRefract', 'uDisp', 'uLight', 'uZoom', 'uMix', 'uMaxSlope', 'uMaxH']) {
+      this.u[n] = gl.getUniformLocation(prog, n);
+    }
 
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -77,13 +99,19 @@ export class Renderer {
     this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048;
     gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.uniform1i(this.u.uImg, 0);
-    gl.uniform1i(this.u.uField, 1);
+    gl.uniform1i(this.u.uImg, UNIT_CUR);
+    gl.uniform1i(this.u.uField, UNIT_FIELD);
+    gl.uniform1i(this.u.uImgB, UNIT_NEXT);
     gl.uniform1f(this.u.uMaxSlope, MAX_SLOPE);
     gl.uniform1f(this.u.uMaxH, MAX_HEIGHT);
 
-    this.imgTex = this.fieldTex = null;
-    if (this.image) this.setImage(this.image);
+    // 上下文重建：旧纹理对象全部失效，必须丢弃后重传
+    this.slots = [null, null];
+    this.fieldTex = null;
+    const img = this.image, pend = this.pending;
+    if (img) this.show(img);
+    if (pend) this.setIncoming(pend);
+    this.setMix(this.mix);
     if (this.fieldW) { this.setFieldSize(this.fieldW, this.fieldH); if (this.lastField) this.uploadField(this.lastField); }
     return true;
   }
@@ -100,13 +128,53 @@ export class Renderer {
     return t;
   }
 
-  setImage(canvas: HTMLCanvasElement): void {
-    this.image = canvas;
-    if (this.lost) return;
+  /** 把画布内容传进指定槽位（0=当前，1=备用）。复用已有纹理对象，尺寸变化由 texImage2D 重分配。 */
+  private upload(slot: 0 | 1, canvas: HTMLCanvasElement): void {
     const gl = this.gl;
-    if (this.imgTex) gl.deleteTexture(this.imgTex);
-    this.imgTex = this.makeTex(0);
+    const unit = slot === 0 ? UNIT_CUR : UNIT_NEXT;
+    let t = this.slots[slot];
+    if (!t) { t = this.makeTex(unit); this.slots[slot] = t; }
+    else { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); }
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, canvas);
+  }
+
+  /** 把两个槽位重新绑定到各自的纹理单元（乒乓交换后调用） */
+  private bindSlots(): void {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0 + UNIT_CUR);
+    gl.bindTexture(gl.TEXTURE_2D, this.slots[0]);
+    gl.activeTexture(gl.TEXTURE0 + UNIT_NEXT);
+    // 备用槽可能尚未有图：退回绑当前图，避免采样不完整纹理（WebGL 中行为未定义）
+    gl.bindTexture(gl.TEXTURE_2D, this.slots[1] ?? this.slots[0]);
+  }
+
+  /** 首张：直接成为当前图，无过渡 */
+  show(canvas: HTMLCanvasElement): void {
+    this.image = canvas;
+    if (!this.lost) this.upload(0, canvas);
+  }
+
+  /** 上传「即将淡入」的图到备用槽 */
+  setIncoming(canvas: HTMLCanvasElement): void {
+    this.pending = canvas;
+    if (this.lost) return;
+    this.upload(1, canvas);
+  }
+
+  /** 淡入结束：备用槽提升为当前槽，mix 归零。此后备用槽空闲，供下一次上传复用。 */
+  commit(): void {
+    if (this.pending) { this.image = this.pending; this.pending = null; }
+    if (this.lost) { this.mix = 0; return; }
+    const t = this.slots[0];
+    this.slots[0] = this.slots[1];
+    this.slots[1] = t;
+    this.bindSlots();
+    this.setMix(0);
+  }
+
+  setMix(m: number): void {
+    this.mix = m;
+    if (!this.lost) this.gl.uniform1f(this.u.uMix, m);
   }
 
   setFieldSize(cols: number, rows: number): void {
@@ -114,7 +182,7 @@ export class Renderer {
     if (this.lost) return;
     const gl = this.gl;
     if (this.fieldTex) gl.deleteTexture(this.fieldTex);
-    this.fieldTex = this.makeTex(1);
+    this.fieldTex = this.makeTex(UNIT_FIELD);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cols, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(cols * rows * 4).fill(128));
     gl.uniform2f(this.u.uRefract, this.tuning.refract / cols, this.tuning.refract / rows);
   }
@@ -123,7 +191,7 @@ export class Renderer {
     this.lastField = data;
     if (this.lost || !this.fieldTex) return;
     const gl = this.gl;
-    gl.activeTexture(gl.TEXTURE1);
+    gl.activeTexture(gl.TEXTURE0 + UNIT_FIELD);
     gl.bindTexture(gl.TEXTURE_2D, this.fieldTex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.fieldW, this.fieldH, gl.RGBA, gl.UNSIGNED_BYTE, data);
   }
@@ -135,7 +203,7 @@ export class Renderer {
   }
 
   draw(): void {
-    if (this.lost || !this.imgTex) return;
+    if (this.lost || !this.slots[0]) return;
     const gl = this.gl, t = this.tuning;
     gl.uniform1f(this.u.uDisp, t.dispersion);
     gl.uniform1f(this.u.uLight, t.light);

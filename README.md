@@ -7,16 +7,17 @@
 ## 特性
 
 - **软胶物理 Hero**：粘弹双模软体（弹性模 + 蠕变模），按压凹陷、松手回弹、长按缓慢加深再缓慢恢复；拖动用胶囊接触几何，多点按压 smooth union 融合。不是噪声动画，是认真调过参的物理。
+- **相册轮播**：多张照片在 Hero 区自动轮播（默认 5 秒/张，900ms 淡入淡出），底部指示器 + 播放/暂停按钮；**软体特效与图片完全解耦**，轮播期间按压形变一毫不受影响。
 - **配置全环境变量驱动**：姓名、日期、场地、坐标、文案、主图焦点……全部通过 `VITE_*` 注入，仓库内零真实个人信息。
-- **零重型运行时依赖**：没有框架、没有 UI 库，构建后首屏 JS ≈ **12.6KB gzip**（预算 30KB，构建时自动校验）。
+- **零重型运行时依赖**：没有框架、没有 UI 库，构建后首屏 JS ≈ **19.4KB gzip**（预算 30KB，构建时自动校验）。相册无论多少张，**显存里永远只有 2 张图纹理**（双纹理乒乓复用）。
 - **移动端 / 微信优先**：针对触控交互与微信分享卡片（og: 元信息 + 分享图）设计，桌面端同样响应式。
 - **静态可部署**：纯静态产物，可部署到 Cloudflare Pages、Netlify、Vercel、GitHub Pages 等任意静态托管。
 - **内置调参面板**：`?tune` 打开，19 个物理 / 渲染参数实时调整并复制 JSON。
-- **测试齐备**：25 项单元测试 + 15 项 Playwright 端到端验证。
+- **测试齐备**：45 项单元测试 + 23 项 Playwright 端到端验证。
 
 ## 效果预览
 
-打开页面后是一个沉静的封面：大号日期与两位新人的名字浮在主图上，按住画面轻抚，主图像一块软胶一样被按出凹陷、随手指拖动、松手后缓慢弹回；向下滑动依次是时间倒计时、场地与一键导航、交通指引、婚礼流程与结语。
+打开页面后是一个沉静的封面：大号日期与两位新人的名字浮在主图上，按住画面轻抚，主图像一块软胶一样被按出凹陷、随手指拖动、松手后缓慢弹回；照片会缓缓轮播，底部圆点指示当前位置，右侧按钮可随时暂停。向下滑动依次是时间倒计时、场地与一键导航、交通指引、婚礼流程与结语。
 
 最直观的方式是自己跑起来看：`npm run dev` 后在浏览器打开（建议用手机或 DevTools 的移动端模拟），按住 Hero 区试一试。
 
@@ -114,17 +115,37 @@ VITE_SITE_JSON={"schedule":[{"time":"11:30","title":"宾客入席"},{"time":"12:
 - 同理，**`assets-src/` 照片目录也已被 gitignore**。把个人照片放在这个目录里只用于本地生成压缩产物，原图不会提交到仓库。
 - 请不要把真实个人信息（姓名、地址、坐标、照片）直接写进任何被跟踪的文件。
 
-## 更换主图
+## 更换照片与相册
 
-1. 把你的照片放到 `assets-src/hero-source.jpg`（该目录已 gitignore，照片不会入库）。
-2. 运行：
+1. **第 1 张**（首屏，也是分享缩略图来源）放到 `assets-src/hero-source.jpg`。
+2. **其余照片**放到 `assets-src/gallery/`，**按文件名排序**决定轮播顺序。
+   （`assets-src/` 整目录已 gitignore，原始照片不会入库。）
+3. 运行：
 
    ```bash
-   npm run assets:hero
+   npm run assets:gallery
    ```
 
-   脚本会压缩并输出多尺寸的 `assets/hero-{m,l}.{webp,jpg}` 到产物目录。
-3. 如果构图重心不在画面中央，用 `VITE_HERO_FOCAL_X` / `VITE_HERO_FOCAL_Y`（0~1）指定裁切焦点。
+   脚本会为每张图输出 `gallery-NN-{m,l}.webp` + `-m.jpg` 兜底，并生成清单。
+
+### 为什么构建期要「预裁切」
+
+Hero 画框很竖（手机实测 390×844 = **0.462**，桌面 605×900 = **0.672**），而相册里常混有横图。
+如果只把横图缩窄交给运行时 `cover`，浏览器会把它拉伸到竖向画框 —— 实测**放大 2.5 倍**，明显发糊。
+所以管线按各断点的画框比例先裁到固定宽高比（`-m` = 0.70 / `-l` = 0.68），再按**高度**缩放，
+运行时只做极小的二次裁切，不产生放大。
+
+### 构图焦点
+
+横图裁成竖版时主体可能被切偏。给该文件名指定焦点即可（0~1，`[x, y]`，x=0 保留左侧）：
+
+```json
+// assets-src/gallery-focal.json（可选，不入库）
+{ "123_0049": [0.5, 0.45], "561A6037": [0.62, 0.4] }
+```
+
+默认 `[0.5, 0.4]`（略偏上，给底部文案留空间）。运行时的二次裁切焦点由
+`VITE_HERO_FOCAL_X` / `VITE_HERO_FOCAL_Y` 控制，通常无需改动。
 
 **获取场地坐标**：在高德地图搜索场地 → 右键场地位置 → 复制坐标（gcj-02，与高德 / 腾讯地图通用），填入 `VITE_VENUE_LAT` / `VITE_VENUE_LNG`，用于「一键导航」。
 
@@ -236,20 +257,22 @@ web/
 │   │   ├── softbody.ts         #   软体物理（弹性 + 蠕变）
 │   │   ├── renderer.ts         #   Canvas 渲染
 │   │   ├── shaders.ts          #   着色器
+│   │   ├── slideshow.ts        #   相册轮播（预载 / 暂停条件 / 指示器）
 │   │   ├── hero.ts             #   交互（按压 / 拖动）
-│   │   ├── loader.ts           #   主图加载
+│   │   ├── loader.ts           #   图片加载
 │   │   └── tune.ts             #   调参面板
 │   ├── main.ts                 # 首屏与封面
 │   ├── details.ts              # 时间 / 地点 / 交通 / 流程 / 结语
 │   └── vite-env.d.ts           # ImportMetaEnv 类型声明
 ├── tests/                      # 单元测试
 │   ├── softbody.test.ts        #   13 项
-│   └── config.test.ts          #   12 项
+│   ├── config.test.ts          #   20 项
+│   └── gallery.test.ts         #   7 项（相册产物不变量）
 ├── scripts/
 │   ├── setup.mjs               # 交互式配置向导 → 生成 .env
-│   ├── make-placeholder.mjs    # 生成占位主图
-│   ├── optimize-hero.mjs       # 主图压缩 → assets/hero-{m,l}.{webp,jpg}
-│   ├── e2e.mjs                 # Playwright 端到端验证（15 项）
+│   ├── make-placeholder.mjs    # 生成 3 张占位图
+│   ├── optimize-gallery.mjs    # 相册压缩 + 预裁切 → src/assets/gallery-NN-*
+│   ├── e2e.mjs                 # Playwright 端到端验证（23 项）
 │   └── check-size.mjs          # 产物体积预算校验
 └── docs/
     └── SPEC.md                 # 物理与交互规格
@@ -263,10 +286,10 @@ web/
 | `npm run dev` | 本地开发服务器（`--host`，局域网可访问） |
 | `npm run build` | 类型检查 + 生产构建 |
 | `npm run preview` | 预览构建产物 |
-| `npm run test` | 运行单元测试（Vitest，25 项） |
-| `npm run e2e` | 运行 Playwright 端到端验证（15 项） |
-| `npm run assets:placeholder` | 生成占位主图 |
-| `npm run assets:hero` | 压缩 `assets-src/hero-source.jpg` → 产物主图 |
+| `npm run test` | 运行单元测试（Vitest，45 项） |
+| `npm run e2e` | 运行 Playwright 端到端验证（23 项） |
+| `npm run assets:placeholder` | 生成 3 张占位图 |
+| `npm run assets:gallery` | 压缩 + 预裁切整个相册 → `src/assets/gallery-NN-*` |
 | `node scripts/check-size.mjs` | 校验产物体积预算（首屏 JS ≤ 30KB gzip） |
 
 ## 开发与测试

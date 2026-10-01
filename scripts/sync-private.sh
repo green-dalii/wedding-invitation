@@ -19,7 +19,8 @@ DST="${DST:-$HOME/project/wedding/deploy/wedding-invitation-private}"
 
 SECRETS=(
   ".env"                        # 真实姓名 / 坐标 / 航班 / 高德 key
-  "assets-src/hero-source.jpg"  # 真实照片
+  "assets-src/hero-source.jpg"  # 真实照片（第 1 张，也是 og.jpg 来源）
+  "assets-src/gallery"          # 真实相册（后续各张，按文件名排序）
   "wrangler.toml"               # 真实 D1 database_id
 )
 
@@ -37,7 +38,7 @@ else
   echo "  ⚠️ $SRC 不是 git 仓库，改用文件复制（会排除 .env 与派生物）"
   rsync -a --delete \
     --exclude '.git' --exclude 'node_modules' --exclude 'dist' \
-    --exclude '.env' --exclude 'assets-src/hero-source.jpg' \
+    --exclude '.env' --exclude 'assets-src' \
     --exclude 'src/assets' --exclude 'public/og.jpg' --exclude 'src/generated' \
     "$SRC"/ "$DST"/
 fi
@@ -52,10 +53,16 @@ echo "▸ 安装依赖（跳过 prepare，避免占位图覆盖真实照片）�
 echo "▸ 拷入私密文件…"
 missing=0
 for f in "${SECRETS[@]}"; do
-  if [ -f "$SRC/$f" ]; then
+  if [ -e "$SRC/$f" ]; then
     mkdir -p "$DST/$(dirname "$f")"
-    cp "$SRC/$f" "$DST/$f"
-    echo "  ✓ $f"
+    # -R 兼容目录（assets-src/gallery）；先清空目标再拷，避免残留旧图
+    if [ -d "$SRC/$f" ]; then rm -rf "$DST/$f"; fi
+    cp -R "$SRC/$f" "$DST/$f"
+    if [ -d "$SRC/$f" ]; then
+      echo "  ✓ $f/ ($(find "$SRC/$f" -type f | wc -l | tr -d ' ') 个文件)"
+    else
+      echo "  ✓ $f"
+    fi
   else
     echo "  ✗ 缺失：$SRC/$f"
     missing=1
@@ -73,7 +80,15 @@ echo "  ✓ 照片校验一致 (${src_sha:0:12}…)"
 
 # ── 4. 生成派生产物（真实照片压缩图，Cloudflare 构建时用得到）──
 echo "▸ 生成派生产物…"
-( cd "$DST" && node scripts/optimize-hero.mjs )
+( cd "$DST" && node scripts/optimize-gallery.mjs )
+
+# 校验：私有仓库里确实生成了多张相册图（防止只生成了首张）
+gen_count=$(ls -1 "$DST/src/assets" 2>/dev/null | grep -c -- '-m.webp$' || true)
+src_count=$(( $(find "$SRC/assets-src/gallery" -maxdepth 1 -name '*.jpg' 2>/dev/null | wc -l | tr -d ' ') + 1 ))
+if [ "$gen_count" -ne "$src_count" ]; then
+  echo "✗ 相册产物数量不符：生成 $gen_count 张，源 $src_count 张"; exit 1
+fi
+echo "  ✓ 相册产物 $gen_count 张"
 
 echo ""
 echo "✓ 同步完成。下一步："

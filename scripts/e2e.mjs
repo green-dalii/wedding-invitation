@@ -74,20 +74,21 @@ try {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   track(page, 'mobile-gl');
-  await page.goto(`${BASE}/?gl=force&debug`);
+  // autoplay=0：像素对比需要可复现的静态画面（轮播另有 T13 专项覆盖）
+  await page.goto(`${BASE}/?gl=force&debug&autoplay=0`);
   await waitHero(page);
   const d0 = await dbg(page);
   check('T2 loader 结束、canvas 就绪', (await page.$eval('.hero-photo canvas', (c) => c.width)) > 0 && d0.mode === 'gl');
 
   // 像素对比期间隐藏 DOM 覆盖层（scrim/文案），保证截到的是纯 canvas 画面
   const hideOverlays = () => page.evaluate(() => {
-    for (const sel of ['.hero-scrim', '.hero-copy', '.hint']) {
+    for (const sel of ['.hero-scrim', '.hero-copy', '.hint', '.hero-bar']) {
       const el = document.querySelector(sel);
       if (el) el.style.visibility = 'hidden';
     }
   });
   const showOverlays = () => page.evaluate(() => {
-    for (const sel of ['.hero-scrim', '.hero-copy', '.hint']) {
+    for (const sel of ['.hero-scrim', '.hero-copy', '.hint', '.hero-bar']) {
       const el = document.querySelector(sel);
       if (el) el.style.visibility = '';
     }
@@ -192,7 +193,7 @@ try {
   const dctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
   const dpage = await dctx.newPage();
   track(dpage, 'desktop');
-  await dpage.goto(`${BASE}/?gl=force&debug`);
+  await dpage.goto(`${BASE}/?gl=force&debug&autoplay=0`);
   await waitHero(dpage);
   const boxes = await dpage.evaluate(() => {
     const p = document.querySelector('.hero-photo').getBoundingClientRect();
@@ -211,10 +212,80 @@ try {
   await waitHero(spage);
   const st = await spage.evaluate(() => ({
     mode: (window).__hero.debug().mode,
-    bg: getComputedStyle(document.querySelector('.hero-photo')).backgroundImage,
+    // 静态降级改为两层 .hero-layer 交叉淡入，首张图挂在第一层
+    layers: [...document.querySelectorAll('.hero-layer')].map(
+      (e) => getComputedStyle(e).backgroundImage
+    ),
+    canvasHidden: getComputedStyle(document.querySelector('canvas')).display === 'none',
   }));
-  check('T10 静态降级显示真实照片', st.mode === 'static' && st.bg.includes('hero-'), st.bg.slice(0, 60));
+  check(
+    'T10 静态降级显示真实照片',
+    st.mode === 'static' && st.layers.length === 2 && st.layers[0].includes('gallery-01') && st.canvasHidden,
+    `mode=${st.mode} layers=${st.layers.length} bg=${st.layers[0].slice(0, 50)}`
+  );
   await sctx.close();
+
+  // ================= 相册轮播（默认自动播放） =================
+  const cctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true });
+  const cpage = await cctx.newPage();
+  track(cpage, 'carousel');
+  await cpage.goto(`${BASE}/?gl=force&debug`);
+  await waitHero(cpage);
+  const gal = () => cpage.evaluate(() => (window).__hero.gallery());
+
+  const g0 = await gal();
+  const dotCount = await cpage.$$eval('.hero-dot', (els) => els.length);
+  check('T13 指示器数量与相册一致', dotCount === g0.total && g0.total > 1, `dots=${dotCount} total=${g0.total}`);
+  check('T13 默认自动播放、起始为第 1 张', g0.autoplay === true && g0.index === 0, `autoplay=${g0.autoplay} index=${g0.index}`);
+
+  // 自动前进
+  await cpage.waitForFunction((b) => (window).__hero.gallery().index !== b, g0.index, { timeout: 15000 });
+  const g1 = await gal();
+  check('T13 自动前进到下一张', g1.index === g0.index + 1, `index=${g0.index}→${g1.index}`);
+
+  // 淡入必须是渐变（而不是瞬切），且进度单调递增
+  const rising = await cpage.evaluate(async () => {
+    const G = () => (window).__hero.gallery();
+    await new Promise((r) => { const t = () => (G().fading ? r() : requestAnimationFrame(t)); requestAnimationFrame(t); });
+    const s = [];
+    await new Promise((r) => { const t = () => { s.push(G().mix); (G().fading ? requestAnimationFrame(t) : r()); }; requestAnimationFrame(t); });
+    return s;
+  });
+  // 末帧是落定后的复位值（commit 会把 mix 归零，此刻新图已满屏），比较时应排除
+  const curve = rising.slice(0, -1);
+  const back = curve.filter((v, i) => i > 0 && v < curve[i - 1]).length;
+  check(
+    'T13 淡入为渐变且单调递增',
+    curve.length > 20 && back === 0 && curve[curve.length - 1] > 0.9,
+    `frames=${curve.length} backsteps=${back} 末值=${curve[curve.length - 1].toFixed(2)}`
+  );
+
+  // 点指示器切换（同时验证不会误触软体按压）
+  await cpage.locator('.hero-dot').nth(4).click();
+  await cpage.waitForFunction(() => (window).__hero.gallery().index === 4, null, { timeout: 15000 });
+  const g2 = await gal();
+  check('T13 点指示器可切换且不误触软体', g2.index === 4 && g2.pressing === 0, `index=${g2.index} pressing=${g2.pressing}`);
+  check('T13 选中态仅一颗', (await cpage.$$eval('.hero-dot.on', (e) => e.length)) === 1);
+
+  // 暂停后不再推进
+  await cpage.locator('.hero-play').click();
+  await cpage.waitForTimeout(600);
+  const paused = await gal();
+  await cpage.waitForTimeout(6500);
+  const stillPaused = await gal();
+  check('T13 暂停后不再推进', paused.autoplay === false && stillPaused.index === paused.index, `autoplay=${paused.autoplay} index=${paused.index}→${stillPaused.index}`);
+
+  // 按压期间不切图（长按 6.5s > 一张的停留时长）
+  await cpage.locator('.hero-play').click(); // 恢复自动播放
+  await cpage.waitForTimeout(300);
+  const idxBefore = (await gal()).index;
+  await cpage.mouse.move(195, 420);
+  await cpage.mouse.down();
+  await cpage.waitForTimeout(6500);
+  const idxDuring = (await gal()).index;
+  await cpage.mouse.up();
+  check('T13 按压期间不切图', idxDuring === idxBefore, `index=${idxBefore}→${idxDuring}`);
+  await cctx.close();
 
   // ================= 无报错 =================
   check('T1 全程无 console.error/pageerror', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));

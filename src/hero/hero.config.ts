@@ -43,4 +43,7 @@ export const HERO_CONST = {
   QUALIFY_EMA: 0.021,    // 帧间隔 EMA 阈值（秒）
   HINT_DELAY: 700,       // 提示文案延迟（ms）
   HINT_FADE: 4700,       // 提示文案自动消失（ms）
+  ADVANCE_MS: 5000,      // 轮播：每张停留时长（ms）
+  FADE_MS: 900,          // 轮播：淡入淡出时长（ms）
+  HOVER_TAIL_MS: 2600,   // 鼠标悬停静止多久后允许休眠（要盖住蠕变回弹 ≈1.5s）
 };

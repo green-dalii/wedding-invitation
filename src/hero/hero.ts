@@ -5,10 +5,32 @@
 import { SoftField, DEFAULT_PARAMS } from './softbody';
 import { Renderer } from './renderer';
 import { loadImage, supportsWebp } from './loader';
-import heroMWebp from '../assets/hero-m.webp';
-import heroLWebp from '../assets/hero-l.webp';
-import heroMJpg from '../assets/hero-m.jpg';
+import { Slideshow, type GalleryImage, type SlideshowHost } from './slideshow';
 import { HERO_CONST as C } from './hero.config';
+import { site } from '../config';
+import manifest from '../generated/gallery.json';
+
+/**
+ * 相册素材（构建期由 scripts/optimize-gallery.mjs 产出）。
+ * 用 import.meta.glob 而非逐个 import：图片数量由使用者决定，代码无需改动。
+ */
+const ASSET_URLS = import.meta.glob('../assets/gallery-*.{webp,jpg}', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
+
+const urlOf = (id: string, suffix: string): string => ASSET_URLS[`../assets/${id}${suffix}`] ?? '';
+
+/** 相册清单：第 1 张为原 Hero 主图，其余按文件名排序 */
+const GALLERY: GalleryImage[] = manifest.images
+  .map((im) => ({
+    id: im.id,
+    m: urlOf(im.id, '-m.webp'),
+    l: urlOf(im.id, '-l.webp'),
+    mJpg: urlOf(im.id, '-m.jpg'),
+  }))
+  .filter((im) => im.m && im.mJpg);
 
 const SUB_DT = 1 / 60;
 const MAX_STEPS = 3;
@@ -33,6 +55,26 @@ export interface HeroDebug {
   rows: number;
 }
 
+/** 轮播状态（供 E2E / 诊断读取） */
+export interface GalleryDebug {
+  index: number;
+  total: number;
+  /** 淡入进度（已缓动） */
+  mix: number;
+  fading: boolean;
+  autoplay: boolean;
+  /** 当前指针数（残留的 hover 指针会让循环无法休眠，诊断用） */
+  pressing: number;
+  /** 环境是否允许推进（页面前台 + Hero 可见 + 未按压） */
+  canAdvance: boolean;
+  /** Hero 是否在视口内 */
+  visible: boolean;
+  /** 页面是否在前台 */
+  docVisible: boolean;
+  /** 切换触发原因日志（诊断用） */
+  log: string[];
+}
+
 /** 供 ?tune 调参面板使用 */
 export const runtime: {
   field: SoftField | null;
@@ -50,6 +92,8 @@ interface Ptr {
   sy: number;
   pressure: number;
   target: number;
+  /** 是否已计入「真实按压」计数（target===1） */
+  counted: boolean;
 }
 
 export async function initHero(opts: { onProgress?: (loaded: number, total: number) => void } = {}): Promise<void> {
@@ -63,6 +107,8 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   const glFlag = params.get('gl');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const debugOn = import.meta.env.DEV || params.has('debug');
+  // ?autoplay=0：停掉自动轮播（E2E 需要可复现的静态画面）
+  const autoplayOff = params.get('autoplay') === '0';
 
   // ---- 尺寸与网格 ----
   let cssW = 1, cssH = 1, cell = 1, cols = COLS, rows = 1;
@@ -82,6 +128,23 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   let buf = new Uint8Array(0);
   let texCanvas: HTMLCanvasElement | null = null;
   let texAspect = 0;
+  // 下面几项提前声明：静态降级会提前 return，但轮播/诊断仍会用到
+  const pointers = new Map<number | string, Ptr>();
+  /**
+   * 「真实按压」计数（target===1 的指针）。
+   * **不能用 pointers.size**：鼠标划过照片会留下 hover 指针（目标压力仅 0.16），
+   * 若当成按压，轮播会被误判为「用户正按着」而静默停止推进。
+   */
+  let pressing = 0;
+  /** 最后一次输入时间：用于「悬停已静止」判定，避免鼠标停住时循环永不休眠 */
+  let lastInputAt = 0;
+  /** 静态模式下的按压标记（GL 模式改用 pressing 判断） */
+  let staticPressing = false;
+  /** 当前已显示的图（resize 重新上传时需要） */
+  let currentImg: HTMLImageElement | null = null;
+  /** 备用槽里等待淡入的图 */
+  let pendingImg: HTMLImageElement | null = null;
+  let slideshow: Slideshow | null = null;
 
   function measure(): void {
     const r = photo!.getBoundingClientRect();
@@ -96,17 +159,41 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
     }
   }
 
-  // ---- 图片选择与加载（§5.3） ----
+  // ---- 相册：素材选择与首张加载（§5.3 / §5.13） ----
   measure();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const needed = cssW * dpr;
-  let url = needed > 900 ? heroLWebp : heroMWebp;
-  if (!(await supportsWebp())) url = heroMJpg;
+  const webp = await supportsWebp();
+  // 按视口选移动端/桌面端素材；WebP 不支持时退回 JPEG。
+  // 读的是实时 cssW，所以旋屏后重新上传会自然换到另一档。
+  const pickUrl = (im: GalleryImage): string => (webp ? (cssW * dpr > 900 ? im.l : im.m) : im.mJpg);
 
-  const img = await loadImage(url, (loaded, total) => opts.onProgress?.(loaded, total));
+  const first = GALLERY[0];
+  if (!first) {
+    console.error('[hero] 相册为空，请先运行：node scripts/optimize-gallery.mjs');
+    return;
+  }
+  const firstImg = await loadImage(pickUrl(first), (loaded, total) => opts.onProgress?.(loaded, total));
   opts.onProgress?.(1, 1);
 
-  // ---- 静态降级（§5.12） ----
+  // 轮播选项（延后创建实例：需要 renderer / drawDirty / wake 已就绪）
+  const slideshowOpts = {
+    advanceMs: C.ADVANCE_MS,
+    // reduced-motion：不做透明度动画，切换直接落定
+    fadeMs: reduced ? 0 : C.FADE_MS,
+    // reduced-motion：默认不自动播放，但用户仍可用播放按钮手动开启
+    autoplay: !reduced && !autoplayOff,
+    // 页面前台 + Hero 可见 + 用户未按压时才推进
+    canAdvance: () => visible && !document.hidden && pressing === 0 && !staticPressing,
+    pickUrl,
+  };
+
+  /** 创建轮播实例（GL 与静态降级共用同一套逻辑） */
+  function mkSlideshow(host: SlideshowHost): Slideshow {
+    slideshow = new Slideshow(GALLERY, host, { ...slideshowOpts, mount: photo! });
+    return slideshow;
+  }
+
+  // ---- 静态降级（§5.12）：无 WebGL 时用两层背景图做同样的淡入淡出 ----
   if (glFlag === 'off') {
     enterStatic();
     return;
@@ -120,11 +207,10 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   runtime.renderer = renderer;
 
   function enterStatic(): void {
-    photo!.style.backgroundImage = `url(${url})`;
     photo!.classList.add('static-mode');
     canvas!.style.display = 'none';
-    const on = () => photo!.classList.add('pressing');
-    const off = () => photo!.classList.remove('pressing');
+    const on = () => { staticPressing = true; photo!.classList.add('pressing'); };
+    const off = () => { staticPressing = false; photo!.classList.remove('pressing'); slideshow?.refresh(); };
     photo!.addEventListener('pointerdown', on, { passive: true });
     photo!.addEventListener('pointerup', off, { passive: true });
     photo!.addEventListener('pointercancel', off, { passive: true });
@@ -132,6 +218,43 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
     exposeDebug('static');
     finishCopy();
     opts.onProgress?.(1, 1);
+
+    // 两层 .hero-layer 交换 opacity；行为逻辑完全复用同一个 Slideshow
+    const layers = [0, 1].map(() => {
+      const el = document.createElement('div');
+      el.className = 'hero-layer';
+      el.style.backgroundImage = `url(${pickUrl(first)})`;
+      photo!.appendChild(el);
+      return el;
+    });
+    layers[0].style.opacity = '1';
+    layers[1].style.opacity = '0';
+    let front = 0;
+    let raf = 0;
+    let last = 0;
+    const staticHost: SlideshowHost = {
+      prepare(img) { layers[1 - front].style.backgroundImage = `url(${img.src})`; },
+      setMix(m) { layers[1 - front].style.opacity = String(m); },
+      commit() {
+        layers[1 - front].style.opacity = '1';
+        layers[front].style.opacity = '0';
+        front = 1 - front;
+      },
+      // 静态模式没有物理循环，用一段短命 rAF 驱动淡入（结束即停）
+      wake() {
+        if (raf) return;
+        last = performance.now();
+        const step = (now: number) => {
+          raf = 0;
+          const dt = Math.min(Math.max((now - last) / 1000, 0), 0.05);
+          last = now;
+          slideshow?.tickFade(dt);
+          if (slideshow?.isFading()) raf = requestAnimationFrame(step);
+        };
+        raf = requestAnimationFrame(step);
+      },
+    };
+    mkSlideshow(staticHost).start();
   }
 
   function finishCopy(): void {
@@ -139,7 +262,8 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   }
 
   // ---- GL 模式 ----
-  function buildTexture(): void {
+  /** 把图按 cover 裁切绘入中转 canvas（复用同一个，避免反复分配） */
+  function renderTexture(src: HTMLImageElement): HTMLCanvasElement {
     const maxTex = renderer!.maxTextureSize;
     let tw = Math.min(Math.max(Math.round(cssW * dpr), 256), Math.min(1600, maxTex));
     let th = Math.round((tw * cssH) / cssW);
@@ -153,16 +277,16 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
     const g = c.getContext('2d')!;
     g.imageSmoothingEnabled = true;
     g.imageSmoothingQuality = 'high';
-    const scale = Math.max(tw / img.width, th / img.height);
+    const scale = Math.max(tw / src.width, th / src.height);
     const sw = tw / scale;
     const sh = th / scale;
-    const fx = 0.5;
-    const fy = 0.4;
-    g.drawImage(img, (img.width - sw) * fx, (img.height - sh) * fy, sw, sh, 0, 0, tw, th);
+    // 构图焦点：VITE_HERO_FOCAL_X/Y（此前被解析但未接入，实际硬编码 0.5/0.4）
+    const fx = site.hero.focal.x;
+    const fy = site.hero.focal.y;
+    g.drawImage(src, (src.width - sw) * fx, (src.height - sh) * fy, sw, sh, 0, 0, tw, th);
     texCanvas = c;
     texAspect = cssW / cssH;
-    renderer!.setImage(c);
-    drawDirty = true;
+    return c;
   }
 
   function rebuildGrid(): void {
@@ -177,11 +301,12 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   }
 
   rebuildGrid();
-  buildTexture();
+  currentImg = firstImg;
+  renderer.show(renderTexture(currentImg));
+  drawDirty = true;
   runtime.field = field;
 
   // ---- 指针模型（§5.5） ----
-  const pointers = new Map<number | string, Ptr>();
   let moveAccX = 0, moveAccY = 0, movePressSum = 0, moveCount = 0;
 
   function toGrid(cx: number, cy: number): [number, number] {
@@ -193,9 +318,23 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
     onFirstTouch();
     const target = buttons > 0 || type !== 'mouse' ? 1 : C.HOVER_PRESSURE;
     const [gx, gy] = toGrid(cx, cy);
-    pointers.set(id, { id, px: gx, py: gy, sx: gx, sy: gy, pressure: 0, target });
+    const prev = pointers.get(id);
+    if (prev?.counted) pressing--; // 同一 id 从 hover 升级为按压时先退掉旧计数
+    const p: Ptr = { id, px: gx, py: gy, sx: gx, sy: gy, pressure: 0, target, counted: target === 1 };
+    if (p.counted) pressing++;
+    pointers.set(id, p);
+    lastInputAt = performance.now();
     jitterImpulse(cx, cy, JIMPULSE_DOWN * target, 1);
     wake();
+  }
+
+  /** 改目标压力并同步按压计数（避免计数漂移） */
+  function setTarget(p: Ptr, t: number): void {
+    if (t !== p.target) {
+      const on = t === 1;
+      if (on !== p.counted) { pressing += on ? 1 : -1; p.counted = on; }
+      p.target = t;
+    }
   }
 
   function movePointer(id: number | string, cx: number, cy: number, type: string, buttons: number, dx: number, dy: number): void {
@@ -209,7 +348,8 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
     const [gx, gy] = toGrid(cx, cy);
     p.px = gx;
     p.py = gy;
-    if (type === 'mouse') p.target = buttons > 0 ? 1 : C.HOVER_PRESSURE;
+    if (type === 'mouse') setTarget(p, buttons > 0 ? 1 : C.HOVER_PRESSURE);
+    lastInputAt = performance.now();
     moveAccX += dx;
     moveAccY += dy;
     movePressSum += p.target;
@@ -220,9 +360,13 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   function endPointer(id: number | string): void {
     const p = pointers.get(id);
     if (!p) return;
+    if (p.counted) pressing--;
     const r = photo!.getBoundingClientRect();
     jitterImpulse(r.left + p.sx * cell, r.top + p.sy * cell, JIMPULSE_UP, -1);
     pointers.delete(id);
+    lastInputAt = performance.now();
+    // 松手后重新计满停留时间：按压期间的等待不做补涨
+    if (pressing === 0) slideshow?.refresh();
   }
 
   // 事件绑定（PointerEvent 或 touch/mouse 降级）
@@ -374,7 +518,11 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
     const dt = Math.min(Math.max((now - last) / 1000, 0), 0.05);
     last = now;
 
-    const simActive = pointers.size > 0 || field.peak > SLEEP_EPS;
+    // 真实按压（手指 / 按下）必须保持唤醒，回弹动画要完整播完；
+    // 仅悬停（鼠标）时，指针静止后画面不再变化，可以休眠 ——
+    // 否则鼠标停在照片上会让循环永远跑 60fps（纯耗电，桌面常见场景）。
+    const hoverSettled = pressing === 0 && pointers.size > 0 && now - lastInputAt > C.HOVER_TAIL_MS;
+    const simActive = pressing > 0 || (!hoverSettled && field.peak > SLEEP_EPS);
     if (simActive) {
       acc += dt;
       let steps = 0;
@@ -391,6 +539,8 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
       }
     }
 
+    // 淡入与物理共用本循环：过渡期间保持唤醒，结束后自然回到休眠
+    const fading = slideshow ? slideshow.tickFade(dt) : false;
     const jitMoving = jitterStep(dt);
 
     if (drawDirty) {
@@ -409,7 +559,7 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
       } else slowFrames = 0;
     }
 
-    if (!simActive && pointers.size === 0 && !jitMoving) {
+    if (!simActive && !fading && pressing === 0 && !jitMoving) {
       if (++idleFrames >= IDLE_FRAMES_TO_SLEEP) {
         sleep();
         return;
@@ -456,14 +606,19 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   if ('IntersectionObserver' in window) {
     new IntersectionObserver((entries) => {
       visible = entries[0].isIntersecting;
-      if (visible) wake();
-      else if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+      if (visible) {
+        slideshow?.refresh();
+        wake();
+      } else if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     }, { threshold: 0.05 }).observe(hero);
   }
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
-    } else wake();
+    } else {
+      slideshow?.refresh(); // 回到前台重新计满停留，不做补涨
+      wake();
+    }
   });
 
   // ---- resize（§5.2） ----
@@ -481,7 +636,11 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
       cssW = Math.max(1, w);
       cssH = Math.max(1, h);
       rebuildGrid();
-      if (aspectChanged || widthChanged) buildTexture();
+      if ((aspectChanged || widthChanged) && currentImg) {
+        // 重新上传当前图：视口变化后 m/l 档位与网格尺寸都可能需要更新
+        renderer!.show(renderTexture(currentImg));
+        drawDirty = true;
+      }
       wake();
     });
   }
@@ -503,6 +662,18 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
         cols: field.cols,
         rows: field.rows,
       }),
+      gallery: (): GalleryDebug => ({
+        index: slideshow?.index ?? 0,
+        total: GALLERY.length,
+        mix: slideshow?.mix ?? 0,
+        fading: slideshow?.isFading() ?? false,
+        autoplay: slideshow?.isAutoplay() ?? false,
+        pressing,
+        canAdvance: slideshowOpts.canAdvance(),
+        log: slideshow?.log ?? [],
+        visible,
+        docVisible: !document.hidden,
+      }),
       // 仅 ?debug：诊断/隔离实验用（关闭折射、高光等定位伪影来源）
       setTuning: (t: Partial<{ refract: number; dispersion: number; light: number; zoom: number }>) => {
         Object.assign(renderer!.tuning, t);
@@ -510,20 +681,25 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
         wake();
       },
       refDataURL: () => {
-        if (mode !== 'gl' || !texCanvas) return '';
+        if (mode !== 'gl' || !currentImg) return '';
+        // 中转 canvas 现在也用于渲染「下一张」（停留期就位），
+        // 因此不能再假定它还留着当前图 —— 按需重绘当前图以取得准确基准。
+        // （下一张已传上 GPU，覆盖中转 canvas 不会影响它）
+        const tex = renderTexture(currentImg);
         const c = document.createElement('canvas');
         c.width = Math.round(cssW);
         c.height = Math.round(cssH);
         const g = c.getContext('2d')!;
         const z = renderer!.tuning.zoom;
-        g.drawImage(texCanvas, texCanvas.width * (1 - z) / 2, texCanvas.height * (1 - z) / 2, texCanvas.width * z, texCanvas.height * z, 0, 0, c.width, c.height);
+        g.drawImage(tex, tex.width * (1 - z) / 2, tex.height * (1 - z) / 2, tex.width * z, tex.height * z, 0, 0, c.width, c.height);
         return c.toDataURL('image/png');
       },
     };
   }
 
   // ---- 首帧 ----
-  buildTexture();
+  currentImg = firstImg;
+  renderer.show(renderTexture(currentImg));
   field.encode(buf);
   renderer.uploadField(buf);
   renderer.draw();
@@ -531,4 +707,24 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   exposeDebug('gl');
   finishCopy();
   wake();
+
+  // ---- 轮播启动（首张已就位，指示器与预载由此接管） ----
+  mkSlideshow({
+    // 就位：趁停留期完成 cover 裁切 + 纹理上传（不在淡入开始帧做重活）
+    prepare(img) {
+      pendingImg = img;
+      renderer.setIncoming(renderTexture(img));
+      drawDirty = true;
+    },
+    setMix(m) {
+      renderer.setMix(m);
+      drawDirty = true; // 过渡帧必须重绘
+    },
+    commit() {
+      if (pendingImg) { currentImg = pendingImg; pendingImg = null; }
+      renderer.commit();
+      drawDirty = true;
+    },
+    wake,
+  }).start();
 }

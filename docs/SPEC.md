@@ -48,11 +48,12 @@ web/
 ├─ index.html                       ⬜ 见 §8
 ├─ .gitignore                       ⬜ node_modules dist assets-src(可选保留占位)
 ├─ README.md                        ⬜ 换图/改文案/部署 三段
-├─ assets-src/hero-source.jpg       ✅ 占位主图（用户日后替换）
+├─ assets-src/hero-source.jpg       ✅ 第 1 张（用户替换）
+├─ assets-src/gallery/*.jpg         ✅ 后续各张（按文件名排序）；焦点表 gallery-focal.json 可选
 ├─ scripts/
-│  ├─ make-placeholder.mjs          ✅
-│  ├─ optimize-hero.mjs             ✅ 产出 src/assets/hero-{m,l}.webp、hero-m.jpg、src/generated/hero-meta.json(含 lqip)、public/og.jpg
-│  └─ e2e.mjs                       ⬜ 见 §12
+│  ├─ make-placeholder.mjs          ✅ 生成 3 张占位图（hero-source + gallery/01,02）
+│  ├─ optimize-gallery.mjs          ✅ 产出 src/assets/gallery-NN-{m.webp,l.webp,m.jpg}、src/generated/{gallery,hero-meta}.json、public/og.jpg
+│  └─ e2e.mjs                       ✅ 23 项（§12）
 ├─ public/
 │  ├─ _headers                      ⬜ Cloudflare 缓存头 §10
 │  ├─ favicon.svg                   ⬜
@@ -65,13 +66,15 @@ web/
 │  ├─ details.ts                    ⬜ 下方信息区渲染 + 滚动入场 + 复制/导航 §9
 │  ├─ hero/
 │  │  ├─ softbody.ts                ✅ 物理（已单测通过，含限幅）
-│  │  ├─ shaders.ts                 ✅ 顶点/片元着色器
-│  │  ├─ renderer.ts                ✅ WebGL1 封装，含上下文丢失/恢复
+│  │  ├─ shaders.ts                 ✅ 顶点/片元着色器（含轮播双纹理 uMix）
+│  │  ├─ renderer.ts                ✅ WebGL1 封装，含上下文丢失/恢复 + 双纹理乒乓
 │  │  ├─ loader.ts                  ✅ fetch 流进度加载 + webp 检测
-│  │  └─ hero.ts                    ⬜ **核心调度**（输入/循环/休眠/提示/文字抖动/质量自适应/降级）§5–§6
-│  ├─ assets/hero-{m,l}.webp, hero-m.jpg   ✅（占位）
-│  └─ generated/hero-meta.json      ✅ {width,height,lqip}
-└─ tests/softbody.test.ts           ✅ 4 项通过（`npm test`）
+│  │  ├─ slideshow.ts               ✅ 轮播状态机（预载/暂停条件/指示器/播放按钮）§5.13
+│  │  ├─ hero.config.ts             ✅ 物理/渲染/交互常量集中管理
+│  │  └─ hero.ts                    ✅ **核心调度**（输入/循环/休眠/提示/文字抖动/质量自适应/降级）§5–§6
+│  ├─ assets/gallery-NN-*.webp|jpg  ✅（占位，gitignore）
+│  └─ generated/{gallery,hero-meta}.json  ✅（gitignore）
+└─ tests/{softbody,config,gallery}.test.ts  ✅ 45 项通过（`npm test`）
 ```
 
 > 已有 `renderer.ts / shaders.ts / loader.ts` 尚未做过 `tsc` 与浏览器实测。实现者第一步：`npx tsc --noEmit`，修正后再往下做。着色器/渲染器若有 bug 直接修，接口保持：`Renderer.create / setImage / setFieldSize / uploadField / resize / draw / tuning / onRestore / lost / maxTextureSize`。
@@ -95,7 +98,9 @@ web/
   <div class="hero-photo" style="background-image:url(__LQIP__)">   <!-- 输入监听在此 -->
     <canvas></canvas>
     <div class="hero-scrim"></div>                                   <!-- 仅移动端，保证文字可读，pointer-events:none -->
-    <p class="hint">按住画面，轻轻抚过</p>
+    <p class="hint">哈哈镜~来戳我</p>
+    <!-- .hero-bar（指示器 + 播放/暂停）由 slideshow.ts 在运行时插入；
+         静态模式另插入两层 .hero-layer -->
   </div>
   <div class="hero-copy">                                            <!-- pointer-events:none；按钮单独 auto -->
     <p data-jit="0.5" class="kicker">诚邀您见证我们的婚礼</p>
@@ -115,9 +120,20 @@ web/
 
 ### 5.3 图片纹理准备
 
-- 变体选择：`needed = cw * min(dpr,2)`；`needed > 900` 用 `hero-l.webp`，否则 `hero-m.webp`；`supportsWebp()` 为 false 时用 `hero-m.jpg`。URL 通过 `import xxx from '../assets/…?url'` 获得（带 hash，可永久缓存）。
-- `loadImage(url, onProgress)` 加载 → 得到 `HTMLImageElement`。
-- **预裁剪纹理**：离屏 `canvas`，尺寸 `tw = clamp(round(cw*min(dpr,2)*1.0), 256, min(1600, renderer.maxTextureSize))`，`th = round(tw*ch/cw)`；按 **cover** 绘制（焦点默认 `fx=0.5, fy=0.4`，来自 `config.hero.focal`），`imageSmoothingQuality='high'`。然后 `renderer.setImage(offscreen)`。
+**素材管线（构建期，`scripts/optimize-gallery.mjs`）**
+
+- 源：`assets-src/hero-source.jpg`（第 1 张，也是 `og.jpg` 来源）+ `assets-src/gallery/*.jpg`（按文件名排序）。
+- **按画框比例预裁切**：Hero 画框很竖（手机实测 390×844 = **0.462**，桌面 605×900 = **0.672**），而相册混有横图（1.43~1.50）。若只缩宽度交给运行时 cover，横图会被拉伸到竖向画框 —— 实测放大 **2.5 倍**，明显发糊。因此构建期先裁到 `-m` = **0.70** / `-l` = **0.68**，再按**高度**缩放（`-m` 1700px、`-l` 1800px），运行时只做极小二次裁切。
+- 三档产物：`gallery-NN-m.webp`(1190×1700) / `gallery-NN-l.webp` / `gallery-NN-m.jpg`（WebP 兜底）。
+- 构图焦点：`assets-src/gallery-focal.json`（可选，不入库），`{ "文件名": [x, y] }`，默认 `[0.5, 0.4]`（略偏上，给底部文案留空间）。
+- 清单：`src/generated/gallery.json`（id/尺寸，**刻意不含 LQIP** —— 11 张内联 base64 会白增约 3KB gzip）；`src/generated/hero-meta.json` 只放第 1 张的 LQIP 供 `__LQIP__` 使用。
+
+**运行时**
+
+- 变体选择：`cw * min(dpr,2) > 900` 用 `-l`，否则 `-m`；`supportsWebp()` 为 false 时用 `-m.jpg`。URL 经 `import.meta.glob('../assets/gallery-*', { eager:true, query:'?url' })` 获得（带 hash，可永久缓存；图片数量由使用者决定，代码无需改动）。
+- **中转 canvas**（`texCanvas`，单张复用）尺寸 `tw = clamp(round(cw*min(dpr,2)), 256, min(1600, maxTextureSize))`，`th = round(tw*ch/cw)`；按 **cover** 绘制，焦点来自 `VITE_HERO_FOCAL_X/Y`（`config.hero.focal`，默认 0.5/0.4）。
+- **纹理单元分配（不可随意改）**：`0` = 当前图 `uImg`，`1` = 高度场 `uField`，`2` = 淡入目标图 `uImgB`。高度场固定在单元 1，第二张图必须另占单元 2，否则 `uploadField` 会把图覆盖掉。
+- **双纹理乒乓**：无论相册多少张，显存里永远只有 2 张图纹理。淡入结束后槽位互换，旧图所在槽位直接作为下一次上传目标。实测：11 张图相册，`createTexture` 调用数恒为 **3**（2 图 + 1 场）。
 - `cw/ch` 宽高比或宽度相对上次变化 >25% 时重新裁剪上传；其余情况沿用。原图 `HTMLImageElement` 常驻以便重裁。
 - shader 的 `uZoom=0.94` 已给边缘变形留余量，勿去掉。
 
@@ -220,10 +236,59 @@ web/
 ### 5.12 降级链
 
 `Renderer.create()` 返回 `null`（无 WebGL / 软件渲染 `failIfMajorPerformanceCaveat` / 着色器失败）→ **静态模式**：
-- `.hero-photo` 用 CSS `background-image:url(选定变体) cover` 显示真实照片；隐藏 canvas；不加载物理代码路径。
+- `canvas` 隐藏；`.hero-photo` 内插入两层 `.hero-layer`（`background-image` + `background-size:cover`），首张 opacity 1、次张 0。
+- 轮播复用**同一套 `Slideshow` 逻辑**，宿主换成「改下一层的 `background-image` + 写 opacity」，因此静态模式同样有指示器、播放/暂停与淡入淡出（由一段短命 `requestAnimationFrame` 驱动，结束即停）。
 - 交互：`pointerdown` 时给 `.hero-photo` 加 `transform:scale(.985)` 的 CSS 过渡（150ms 按下、350ms 弹回），聊胜于无。
 - 页面其余功能不受影响。
-- 测试/CI 用：URL 带 `?gl=force` 时传 `allowSoftware:true`（headless SwiftShader 需要）。
+- 测试/CI 用：URL 带 `?gl=force` 时传 `allowSoftware:true`（headless SwiftShader 需要）；`?gl=off` 强制静态模式。
+
+### 5.13 相册轮播（slideshow.ts）
+
+**参数**：`ADVANCE_MS = 5000`、`FADE_MS = 900`（`hero.config.ts`）。
+
+**关键：物理与图片完全解耦。** 高度场不参与图片运算（只用于算 UV 偏移），
+所以换图 / 淡入淡出**对软体特效零影响**，`softbody.ts` 无需任何改动。
+
+**淡入淡出用双纹理 + `uMix`（GPU 混合），不做 JS 合成**：
+- 两张图**共用同一个 `off`**，所以过渡期间形变完全一致（不会“一张在动、另一张不动”）。
+- 光影在 `mix` **之后**统一施加，只算一次；`uMix` 用 uniform 分支，静止态零额外采样。
+- 缓动：`smootherstep`（`t³(t(6t-15)+10)`）—— 线性 crossfade 中段会发灰。
+- 反例（已否决）：JS 逐帧把两张图合成到一个 canvas 再 `texImage2D`，
+  相当于每秒 60 次 1.3MP 纹理上传，手机会卡。
+
+**重活一律放在停留期（性能关键）**：
+`cover` 裁切（`drawImage` 一张 ~1.3MP 图）+ `texImage2D` 上传都在**预载完成时**做（`host.prepare`），
+淡入开始帧只需改一个 uniform + 唤醒循环。实测淡入 934ms / 55 帧 / p50 16.7ms /
+**p95 18.6ms（无掉帧）**。
+
+**省电**：停留 5s 用 `setTimeout`，主循环保持休眠（不常驻 rAF）；
+只有淡入的 ~900ms 唤醒循环，结束后自然回到休眠。即每 5s 只唤醒 0.9s。
+
+**绝不出现空白帧**：每张图展示期间就预载下一张；若到点仍未载好，跳过本轮并在 600ms 后重试。
+
+**暂停条件**（`canAdvance()`）：页面前台 + Hero 在视口内 + 用户未按压。
+- **“真实按压”不能用 `pointers.size` 判定**：鼠标划过照片会留下 hover 指针（目标压力仅 0.16）。
+  必须用单独的 `target===1` 计数（`pressing`），否则鼠标一动轮播就静默停住。
+- 悬停静止（`HOVER_TAIL_MS = 2600`）后允许休眠，否则鼠标停在照片上会让循环永跑 60fps。
+- **指示器容器只拦 `pointerdown`/`touchstart`/`mousedown`/`click`**（防误触软体），
+  **`pointerup` 必须放行**：否则鼠标移向指示器时产生的 hover 指针会永久残留（既卡轮播又永不休眠）。
+
+**定时器纪律**：清待触发计时**必须用 `clearDwell()`**（`clearTimeout` + 置 0），
+不可写 `this.timer = 0` —— 那会孤立仍在排队的定时器，表现为“已暂停却又自己切了一张”。
+`goTo()` 也必须先 `clearDwell()`：用户的选择优先于排队的停留计时。
+
+**预载代数（`gen`）**：落定与指定切换都递增；`onload` 回调带旧代数的直接丢弃。
+否则用户快速连点圆点时，先前发出的预载回调会在新目标就位后回来把 `nextIndex` 改回旧图。
+
+**降级**：`prefers-reduced-motion` → `fadeMs = 0`（直接落定，无透明度动画）
+且**默认不自动播放**（仍可用播放按钮手动开启）。
+
+**指示器 / 播放按钮**：
+- `.hero-bar` 由 JS 插入 `.hero-photo` 内，位于 Hero 底部（`bottom: 15px + safe-area`）；`.hero-copy` 底部内边距相应加大到 50px 让位。
+- 圆点 8px，激活态拉伸为 20px 胶囊 + 莫兰迪红 `#b4656b`；用 `::after` 把可点区域撑到 44px（左右只扩 3px，避免相邻重叠）。
+- 无障碍：`role="tablist"` + 每颗 `aria-label="第 N 张照片"` / `aria-selected`；`aria-pressed` / `aria-label` 随播放状态切换。
+- 只有一张图时**完全不显示**任何控件。
+- 诊断钩子：`window.__hero.gallery()` → `{ index, total, mix, fading, autoplay, pressing, canAdvance, visible, docVisible, log }`；`log` 记录每次切换触发原因。
 
 ## 6. 着色器与视觉要点（shaders.ts 已实现，验收关注）
 
@@ -394,4 +459,8 @@ Google Calendar 网页模板在微信内与国内网络均不可靠；`.ics` 下
 
 ## 15. 需要业主后续提供的素材
 
-Hero 主图（竖版，建议 ≥1600×2400，JPG/PNG，放 `assets-src/hero-source.jpg` 后 `npm run assets:hero`）；新人姓名、日期时间、场地名称与详细地址及坐标、交通指引、当日流程、分享缩略图文案。全部只需改 `src/config.ts` 与主图。
+- **相册**：竖版为主（建议 ≥1600×2400），放 `assets-src/gallery/`，然后 `npm run assets:gallery`。
+  第 1 张仍为 `assets-src/hero-source.jpg`（也是 og.jpg 来源）。横图可用，管线会按画框比例预裁切；
+  若主体被切偏，在 `assets-src/gallery-focal.json` 里给该文件名指定 `[x, y]` 焦点。
+- 新人姓名、日期时间、场地名称与详细地址及坐标、交通指引、当日流程、分享缩略图文案。
+  全部只需改 `.env`。

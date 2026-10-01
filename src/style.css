@@ -91,13 +91,81 @@ html:not(.locked) .hero-photo { touch-action: pan-y; }
 }
 .hint.show { opacity: 1; }
 
+/* ============ 轮播指示器 + 播放/暂停（§5.13） ============ */
+/* 静态降级用的两层图：靠 opacity 交叉淡入 */
+.hero-layer {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: 50% 40%;
+  opacity: 0;
+  will-change: opacity;
+}
+
+.hero-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(15px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  /* 指示器不是照片的一部分：别让滚动锁的 touch-action:none 影响点按 */
+  touch-action: manipulation;
+}
+.hero-dots {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.hero-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(244, 242, 234, 0.5);
+  transition: width 0.34s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.34s ease;
+}
+/* 视口只有 8px：用伪元素把可点区域撑到 44px（相邻不重叠，故左右只扩 3px） */
+.hero-dot::after {
+  content: '';
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  top: -18px;
+  bottom: -18px;
+}
+.hero-dot.on {
+  width: 20px;
+  background: #b4656b;
+}
+.hero-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: rgba(244, 242, 234, 0.9);
+  background: rgba(30, 34, 30, 0.3);
+  transition: color 0.25s ease, background-color 0.25s ease;
+}
+.hero-play:hover { color: #fff; background: rgba(30, 34, 30, 0.52); }
+.hero-play:focus-visible { outline-color: #f4f2ea; }
+
 .hero-copy {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  padding: 0 24px calc(28px + env(safe-area-inset-bottom));
+  /* 底部留出 50px：给轮播指示器让位（指示器在安全区上方 15px） */
+  padding: 0 24px calc(50px + env(safe-area-inset-bottom));
   color: #f4f2ea;
   pointer-events: none;
 }
@@ -583,6 +651,9 @@ textarea.inp { resize: vertical; min-height: 76px; line-height: 1.6; }
 @keyframes draw-check { to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .rsvp-check path { animation: none; stroke-dashoffset: 0; }
+  /* 轮播：去掉胶囊拉伸与淡入动效（切换本身由 JS 直接落定，无过渡） */
+  .hero-dot, .hero-play { transition: none; }
+  .hero-layer { will-change: auto; }
 }
 
 /* ── 作者署名：结语末尾的极淡小字 ─────────────────────────────── */
