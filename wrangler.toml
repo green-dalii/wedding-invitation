@@ -8,7 +8,7 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "wedding"
-database_id = "在此填入你的 D1 database_id"
+database_id = "f6ebf5b9-3a56-4a7e-b220-72736a050950"
 migrations_dir = "migrations"
 
 # 面板密码与会话密钥**不是** VITE_ 前缀，因此不会进入客户端 bundle。
