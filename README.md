@@ -195,9 +195,34 @@ Hero 的形变不是随机噪声或 CSS 动画，而是一个小型的软体物�
 
 ## 项目结构
 
+### 两个 HTML 入口
+
+这是一个多入口（multi-page）构建，根目录下有两个 HTML：
+
+```
+index.html              →  请柬主页，URL 为 /
+dashboard/index.html    →  数据面板，URL 为 /dashboard
+```
+
+两者在 `vite.config.ts` 的 `rollupOptions.input` 中显式声明：
+
+```ts
+input: {
+  main: resolve(__dirname, 'index.html'),
+  dashboard: resolve(__dirname, 'dashboard/index.html'),
+}
+```
+
+- `index.html` 是 Vite 的固定约定，**不可删除**：`npm run dev` 以它为宿主页面，删除则无法启动与构建。
+- 它本身几乎是空骨架 —— 姓名、日期等正文在运行时由 `main.ts` / `details.ts` 注入，`<title>` / `og:*` 则在构建期由 `invite-html` 插件替换。这也是它不含任何真实个人信息的原因。
+- 面板页**必须用目录式结构**（`dashboard/index.html`）。若改名为 `dashboard.html`，Cloudflare Pages 的 clean-URL 处理会把它 308 重定向到 `/dashboard` 并陷入自环。
+- 两者都依赖 Pages 的 **automatic HTML handling** 才能让 `/` 与 `/dashboard/` 正确落到对应文件。
+
 ```
 web/
-├── index.html                  # 单页入口
+├── index.html                  # 入口一：请柬主页（/）
+├── dashboard/
+│   └── index.html              # 入口二：数据面板（/dashboard）
 ├── .env.example                # 配置变量示例（复制为 .env 使用）
 ├── vite.config.ts
 ├── src/
