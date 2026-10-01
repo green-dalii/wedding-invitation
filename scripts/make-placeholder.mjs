@@ -2,7 +2,7 @@
 // 要点：有机内容（不规则散景/柔焦/胶片颗粒），**不含规则网格或同心圆**——
 // 规则纹理会被折射扭曲成假的"横纹竖纹鬼影"，干扰材质评估。
 import sharp from 'sharp';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync, statSync } from 'node:fs';
 
 const W = 1600, H = 2400;
 
@@ -78,6 +78,22 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
 <rect width="${W}" height="${H}" filter="url(#grain)" opacity="0.35"/>
 </svg>`;
 
-mkdirSync('assets-src', { recursive: true });
-await sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toFile('assets-src/hero-source.jpg');
-console.log('OK assets-src/hero-source.jpg', W, H, '(拟真占位，无网格/无同心圆)');
+// 安全阀：**已有真实照片时不得覆盖**。
+// npm install 会触发 prepare 脚本；若此时用占位图覆盖使用者的真实照片，
+// 部署上线就会变成占位图。仅在文件不存在，或显式 --force 时才生成。
+const TARGET = 'assets-src/hero-source.jpg';
+
+async function main() {
+  mkdirSync('assets-src', { recursive: true });
+  const force = process.argv.includes('--force');
+  if (existsSync(TARGET) && !force) {
+    const { size } = statSync(TARGET);
+    console.log(`SKIP ${TARGET} 已存在（${Math.round(size / 1024)} KB），不覆盖。`);
+    console.log('     如需重新生成占位图：npm run assets:placeholder -- --force');
+    return;
+  }
+  await sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toFile(TARGET);
+  console.log('OK ' + TARGET, W, H, '(拟真占位，无网格/无同心圆)');
+}
+
+await main();
