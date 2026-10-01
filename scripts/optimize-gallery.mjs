@@ -24,7 +24,7 @@
 //   x=0 保留左侧、x=1 保留右侧；y 同理。默认 [0.5, 0.4]（略偏上，给底部文案留空间）
 // ═══════════════════════════════════════════════════════════════
 import sharp from 'sharp';
-import { mkdirSync, writeFileSync, statSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, statSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 
 const HERO = 'assets-src/hero-source.jpg';
@@ -73,6 +73,20 @@ if (!files.length) {
   console.error('✗ 没有任何源图，无法生成清单。先运行：npm run assets:placeholder');
   process.exit(1);
 }
+
+// ── 清理陈年派生物 ──────────────────────────────────────────────
+// src/assets/ 完全由本管线拥有：只保留本轮的 gallery-NN-* 。
+// 否则旧单图管线的 hero-*.webp / 删掉照片后残留的产物会一起被打包，
+// 既浪费体积，也会让产物数量校验失真。
+const KEEP = /^gallery-\d{2}-(m\.webp|l\.webp|m\.jpg)$/;
+let pruned = 0;
+for (const f of readdirSync('src/assets')) {
+  if (!KEEP.test(f)) {
+    rmSync(`src/assets/${f}`, { force: true });
+    pruned++;
+  }
+}
+if (pruned) console.log(`▸ 清理了 ${pruned} 个陈年派生物`);
 
 // ── 焦点表（可选）──
 let focals = {};

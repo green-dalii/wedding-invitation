@@ -83,12 +83,18 @@ echo "▸ 生成派生产物…"
 ( cd "$DST" && node scripts/optimize-gallery.mjs )
 
 # 校验：私有仓库里确实生成了多张相册图（防止只生成了首张）
-gen_count=$(ls -1 "$DST/src/assets" 2>/dev/null | grep -c -- '-m.webp$' || true)
+# 只数 gallery-*：旧单图管线的 hero-*.webp 若残留不应计入
+gen_count=$(ls -1 "$DST/src/assets" 2>/dev/null | grep -c -- '^gallery-.*-m\.webp$' || true)
 src_count=$(( $(find "$SRC/assets-src/gallery" -maxdepth 1 -name '*.jpg' 2>/dev/null | wc -l | tr -d ' ') + 1 ))
 if [ "$gen_count" -ne "$src_count" ]; then
   echo "✗ 相册产物数量不符：生成 $gen_count 张，源 $src_count 张"; exit 1
 fi
 echo "  ✓ 相册产物 $gen_count 张"
+
+# 残留的旧单图产物会导致重复打包
+if ls "$DST/src/assets"/hero-* >/dev/null 2>&1; then
+  echo "✗ src/assets 仍残留旧 hero-* 产物"; exit 1
+fi
 
 echo ""
 echo "✓ 同步完成。下一步："
