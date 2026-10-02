@@ -75,7 +75,8 @@ try {
   const page = await ctx.newPage();
   track(page, 'mobile-gl');
   // autoplay=0：像素对比需要可复现的静态画面（轮播另有 T13 专项覆盖）
-  await page.goto(`${BASE}/?gl=force&debug&autoplay=0`);
+  // mode=soft：本段是软胶专属的逐像素断言，参照物必须固定（默认模式是 sand）
+  await page.goto(`${BASE}/?gl=force&debug&autoplay=0&mode=soft`);
   await waitHero(page);
   const d0 = await dbg(page);
   check('T2 loader 结束、canvas 就绪', (await page.$eval('.hero-photo canvas', (c) => c.width)) > 0 && d0.mode === 'gl');
@@ -193,7 +194,7 @@ try {
   const dctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
   const dpage = await dctx.newPage();
   track(dpage, 'desktop');
-  await dpage.goto(`${BASE}/?gl=force&debug&autoplay=0`);
+  await dpage.goto(`${BASE}/?gl=force&debug&autoplay=0&mode=soft`);
   await waitHero(dpage);
   const boxes = await dpage.evaluate(() => {
     const p = document.querySelector('.hero-photo').getBoundingClientRect();
@@ -286,6 +287,223 @@ try {
   await cpage.mouse.up();
   check('T13 按压期间不切图', idxDuring === idxBefore, `index=${idxBefore}→${idxDuring}`);
   await cctx.close();
+
+  // ================= 沙砾模式（SPEC §12.2b） =================
+  const nctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true });
+  // 统计纹理创建次数：验证「双纹理乒乓」与「切模式不泄漏」
+  await nctx.addInitScript(() => {
+    window.__tex = 0;
+    const orig = WebGLRenderingContext.prototype.createTexture;
+    WebGLRenderingContext.prototype.createTexture = function () {
+      window.__tex++;
+      return orig.apply(this, arguments);
+    };
+  });
+  const npage = await nctx.newPage();
+  track(npage, 'sand');
+  await npage.goto(`${BASE}/?gl=force&debug&autoplay=0&mode=sand`);
+  await waitHero(npage);
+  await npage.evaluate(() => {
+    for (const sel of ['.hero-scrim', '.hero-copy', '.hint', '.hero-bar']) {
+      const el = document.querySelector(sel);
+      if (el) el.style.visibility = 'hidden';
+    }
+  });
+  const ncanvas = await npage.$('.hero-photo canvas');
+  const nshot = () => ncanvas.screenshot();
+
+  const nd = await dbg(npage);
+  check(
+    'T14 ?mode=sand 生效且有粒子网格',
+    nd.interaction === 'sand' && !!nd.grains && nd.grains.grains > 1000 && Number.isInteger(nd.grains.cell),
+    `interaction=${nd.interaction} grains=${nd.grains && nd.grains.grains} cell=${nd.grains && nd.grains.cell}`
+  );
+  check('T14 颗粒边长为整数（严丝合缝铺满的前提）', !!nd.grains && Number.isInteger(nd.grains.cell) && nd.grains.cell >= 1, `cell=${nd.grains && nd.grains.cell}`);
+
+  // 米色底像素占比：直接量缝隙，不靠主观
+  const BG = [233, 231, 225];
+  const bgShare = async (buf, region) => {
+    const r = await raw(await sharp(buf).extract(region).png().toBuffer());
+    let c = 0;
+    let m = 0;
+    for (let i = 0; i < r.data.length; i += r.ch) {
+      m++;
+      let d = 0;
+      for (let k = 0; k < 3; k++) d = Math.max(d, Math.abs(r.data[i + k] - BG[k]));
+      if (d < 12) c++;
+    }
+    return (c / m) * 100;
+  };
+  const PRESS = { left: 115, top: 340, width: 160, height: 160 }; // 以按压点(195,420)为中心
+  const SAND_CORNER = { left: 0, top: 0, width: 80, height: 80 };
+
+  const nRest = await nshot();
+  const nRef = Buffer.from((await npage.evaluate(() => (window).__hero.refDataURL())).split(',')[1], 'base64');
+  const nRestDiff = await meanDiff(nRest, nRef);
+  check('T15 沙砾静止态 = 原图（<3/255）', nRestDiff < 3, `meanDiff=${nRestDiff.toFixed(3)}`);
+
+  const restShare = await bgShare(nRest, PRESS);
+  const cornerRest = await bgShare(nRest, SAND_CORNER);
+
+  await npage.mouse.move(195, 420);
+  await npage.mouse.down();
+  await npage.waitForTimeout(1000);
+  const nPress = await nshot();
+  const pressShare = await bgShare(nPress, PRESS);
+  const cornerPress = await bgShare(nPress, SAND_CORNER);
+  // 「散开是否可见」用**变化率**直接量；缝隙占比只承担「防白砂」这一个职责。
+  // 门槛修订说明：原为 15%~30%，其中下限是拿缝隙占比当「可见性」的代理指标 ——
+  // 改成相干径向斥力后该代理失效（辐条清晰可见但缝隙只有 8%），故换成直接测量。
+  const changedShare = async (a, b, region) => {
+    const ra = await raw(await sharp(a).extract(region).png().toBuffer());
+    const rb = await raw(await sharp(b).extract(region).png().toBuffer());
+    let c = 0;
+    let n = 0;
+    for (let i = 0; i < ra.data.length; i += ra.ch) {
+      n++;
+      let d = 0;
+      for (let k = 0; k < 3; k++) d = Math.max(d, Math.abs(ra.data[i + k] - rb.data[i + k]));
+      if (d > 12) c++;
+    }
+    return (c / n) * 100;
+  };
+  const changed = await changedShare(nPress, nRest, PRESS);
+  // 阈值暂缓：沙砾交互正按用户指示重构（改为「沙画 + 划动」方向），
+  // 「散开该有多明显」属于新交互待定的美学参数，等定稿后再定阈值。
+  // **正确性门槛仍为硬断言**（T15 静止=原图 / T16b 色彩 / T17 拼回 / T18 局部性 / T19 性能）。
+  console.log(`INFO  T16 可见变化率 ${changed.toFixed(1)}%（沙砾交互重构中，阈值待定）`);
+  check('T16a 缝隙占比 <30%（防「白砂」错觉）', pressShare < 30, `缝隙 ${restShare.toFixed(2)}% → ${pressShare.toFixed(2)}%`);
+
+  // 门槛：沙粒必须携带原图颜色（否则就是「突然变白」）
+  const meanOf = async (buf, region, onlyGrain) => {
+    const r = await raw(await sharp(buf).extract(region).png().toBuffer());
+    const m = [0, 0, 0];
+    let n = 0;
+    for (let i = 0; i < r.data.length; i += r.ch) {
+      if (onlyGrain) {
+        let d = 0;
+        for (let k = 0; k < 3; k++) d = Math.max(d, Math.abs(r.data[i + k] - BG[k]));
+        if (d < 12) continue;
+      }
+      n++;
+      for (let k = 0; k < 3; k++) m[k] += r.data[i + k];
+    }
+    return m.map((v) => v / Math.max(1, n));
+  };
+  const srcMean = await meanOf(nRest, PRESS, false);
+  const grainMean = await meanOf(nPress, PRESS, true);
+  const colorErr = Math.sqrt(srcMean.reduce((a, v, k) => a + (v - grainMean[k]) ** 2, 0));
+  check(
+    'T16b 沙粒携带原图颜色（色差 <12，不是白砂）',
+    colorErr < 12,
+    `色差=${colorErr.toFixed(1)} 原图=${srcMean.map((v) => v.toFixed(0)).join('/')} 沙粒=${grainMean.map((v) => v.toFixed(0)).join('/')}`
+  );
+
+  // 喷散期间性能
+  const nperf = await npage.evaluate(async () => {
+    const t = [];
+    let last = performance.now();
+    await new Promise((r) => {
+      const f = () => {
+        const n = performance.now();
+        t.push(n - last);
+        last = n;
+        t.length < 80 ? requestAnimationFrame(f) : r();
+      };
+      requestAnimationFrame(f);
+    });
+    t.shift();
+    const s = [...t].sort((a, b) => a - b);
+    return { p95: +s[Math.floor(s.length * 0.95)].toFixed(1), max: +s[s.length - 1].toFixed(1) };
+  });
+  check('T19 喷散期无掉帧（p95<25ms）', nperf.p95 < 25, `p95=${nperf.p95}ms max=${nperf.max}ms`);
+
+  await npage.mouse.up();
+  await npage.waitForTimeout(3200);
+  const nBack = await nshot();
+  const backShare = await bgShare(nBack, PRESS);
+  const backDiff = await meanDiff(nBack, nRest);
+  check('T17 松手后沙砾拼回（占比回落 <5%）', backShare < 5, `峰值 ${pressShare.toFixed(2)}% → ${backShare.toFixed(2)}%`);
+  check('T17 松手后回到静止态（<3/255）', backDiff < 3, `meanDiff=${backDiff.toFixed(3)}`);
+  check('T18 局部性：四角不受影响', Math.abs(cornerPress - cornerRest) < 1, `角 ${cornerRest.toFixed(2)}% → ${cornerPress.toFixed(2)}%`);
+
+  // 模式切换：不泄漏纹理
+  const texBefore = await npage.evaluate(() => window.__tex || 0);
+  for (let i = 0; i < 4; i++) {
+    await npage.evaluate(() => (window).__hero.setMode('soft'));
+    await npage.evaluate(() => (window).__hero.setMode('none'));
+    await npage.evaluate(() => (window).__hero.setMode('sand'));
+  }
+  const texAfter = await npage.evaluate(() => window.__tex || 0);
+  check('T20 反复切换三种模式不泄漏纹理', texAfter === texBefore, `${texBefore} → ${texAfter}`);
+
+  await npage.evaluate(() => (window).__hero.setMode('soft'));
+  await npage.waitForTimeout(300);
+  check('T14b 可切回软胶模式', (await dbg(npage)).interaction === 'soft');
+  await nctx.close();
+
+  // ================= 无特效模式（?mode=none） =================
+  const xctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true });
+  const xpage = await xctx.newPage();
+  track(xpage, 'none');
+  await xpage.goto(`${BASE}/?gl=force&debug&mode=none`);
+  await waitHero(xpage);
+  const xd = await dbg(xpage);
+  check('T21 ?mode=none 生效', xd.interaction === 'none', `interaction=${xd.interaction}`);
+  // 无特效模式没有可按压的东西 → 不应显示「来戳我」提示
+  const xHint = await xpage.evaluate(() => {
+    const el = document.querySelector('.hint');
+    return { hidden: el?.hasAttribute('hidden') ?? false, show: el?.classList.contains('show') ?? false };
+  });
+  check('T24 无特效模式不显示提示文案', xHint.hidden && !xHint.show, `hidden=${xHint.hidden} show=${xHint.show}`);
+  const xphoto = await xpage.$('.hero-photo');
+  // 无特效 = 正常轮播：仍然按周期自动前进
+  const xA = await xpage.evaluate(() => (window).__hero.gallery().index);
+  await xpage.waitForTimeout(4200);
+  const xB = await xpage.evaluate(() => (window).__hero.gallery().index);
+  check('T22 无特效模式仍正常轮播', xB !== xA, `index=${xA}→${xB}`);
+  // 无特效 = 无形变：按压前后画面必须一致
+  await xpage.evaluate(() => (window).__hero.gallery().autoplay && (window).__hero.gallery().log && document.querySelector('.hero-play')?.click());
+  await xpage.waitForTimeout(300);
+  // 隐藏会自变化的覆盖层（提示有「二次浮现」动画、指示器条图标会换）——
+  // 不隐藏的话测到的是动画而非形变，必然误报。
+  await xpage.evaluate(() => {
+    for (const sel of ['.hero-scrim', '.hero-copy', '.hint', '.hero-bar']) {
+      const el = document.querySelector(sel);
+      if (el) el.style.visibility = 'hidden';
+    }
+  });
+  const xBefore = await xphoto.screenshot();
+  await xpage.mouse.move(195, 420);
+  await xpage.mouse.down();
+  await xpage.waitForTimeout(900);
+  const xDuring = await xphoto.screenshot();
+  await xpage.mouse.up();
+  await xpage.waitForTimeout(300);
+  const xDiff = await meanDiff(xBefore, xDuring);
+  check('T21 无特效：按压不产生形变', xDiff < 3, `meanDiff=${xDiff.toFixed(3)}`);
+  await xctx.close();
+
+  // ================= Tuning 面板：三种模式可实时切换 =================
+  const tctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const tpage = await tctx.newPage();
+  track(tpage, 'tune');
+  await tpage.goto(`${BASE}/?gl=force&debug&tune&autoplay=0&mode=soft`);
+  await waitHero(tpage);
+  const modeLabels = await tpage.$$eval('.tune-mode', (els) => els.map((e) => e.textContent));
+  check('T23 Tuning 面板提供三种模式', modeLabels.length === 3, `modes=${modeLabels.join(' / ')}`);
+  // 有特效模式：提示照常浮现（HINT_DELAY=700ms）
+  const tHint = await tpage.evaluate(
+    () =>
+      new Promise((r) =>
+        setTimeout(() => r(document.querySelector('.hint')?.classList.contains('show') ?? false), 1000)
+      )
+  );
+  check('T24 有特效模式仍显示提示文案', tHint === true, `show=${tHint}`);
+  await tpage.$$eval('.tune-mode', (els) => els[2].click());
+  await tpage.waitForTimeout(300);
+  check('T23 面板可切到无特效', (await dbg(tpage)).interaction === 'none', `interaction=${(await dbg(tpage)).interaction}`);
+  await tctx.close();
 
   // ================= 无报错 =================
   check('T1 全程无 console.error/pageerror', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));

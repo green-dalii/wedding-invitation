@@ -14,6 +14,9 @@
 | # | 决策 |
 |---|------|
 | 材质 | **软胶/果冻**：折射为主 + **柔和**高光/遮蔽（光影系数刻意压低，不过重） |
+| **交互模式** | Hero 提供两种可切换的交互模式：**沙砾（默认）**与**软胶（原预设完整保留）**。选择优先级 `?mode=` > `VITE_HERO_MODE` > 默认 `sand`；`/tune` 面板可实时切换（§5.14） |
+| **沙砾材质** | 颗粒取向：像素级沙砾。**静止态就是原图**（由几何构造保证，非调参结果）；按压处沙砾向外扩散露出底色，松手拼回。**不引入任何粒子/图形库** |
+| **沙砾缝隙底色** | 米色 `--bg` `#e9e7e1`（业主已定；非深灰、非模糊底） |
 | 拖动手感 | 单一凹坑跟随手指，**后方留会回弹的软拖尾** |
 | 松手 | 纯弹性回弹（1~2 次轻微过冲，果冻"Q 弹"），**无向外扩散的涟漪**（波/涟漪是水的质感，不是硅胶/果冻） |
 | 多点按压 | **软体物理交互**（非线性、非薄膜）：接触处**深度饱和**（不翻倍）、中间区被压缩**鞍部变浅**（比线性叠加更浅）、各接触平滑合并无折痕、周围是**宽缓低幅的软鼓尾**（随距衰减，非锐棱）。禁止"逐指线性叠加"、禁止"绷面/环脊"（详见 §5.4a） |
@@ -65,10 +68,16 @@ web/
 │  ├─ scrollLock.ts                 ⬜ §7
 │  ├─ details.ts                    ⬜ 下方信息区渲染 + 滚动入场 + 复制/导航 §9
 │  ├─ hero/
+│  │  ├─ modes/                     ✅ 交互模式（§5.14）
+│  │  │  ├─ types.ts                HeroMode 接口
+│  │  │  ├─ bank.ts                 TextureBank（双纹理乒乓）+ FieldTexture（两模式共用）
+│  │  │  ├─ glutil.ts               program 编译/链接
+│  │  │  ├─ soft.ts                 软胶模式（现有实现原样搬移）
+│  │  │  └─ sand.ts                 沙砾模式（GL_POINTS）
 │  │  ├─ softbody.ts                ✅ 物理（已单测通过，含限幅）
-│  │  ├─ shaders.ts                 ✅ 顶点/片元着色器（含轮播双纹理 uMix）
-│  │  ├─ renderer.ts                ✅ WebGL1 封装，含上下文丢失/恢复 + 双纹理乒乓
-│  │  ├─ loader.ts                  ✅ fetch 流进度加载 + webp 检测
+│  │  ├─ shaders.ts                 ✅ 软体 + 沙砾着色器（含轮播双纹理 uMix）
+│  │  ├─ renderer.ts                ✅ 调度器（上下文/纹理银行/高度场/模式）
+│  │  ├─ loader.ts                  ✅ 图片加载 + webp 检测
 │  │  ├─ slideshow.ts               ✅ 轮播状态机（预载/暂停条件/指示器/播放按钮）§5.13
 │  │  ├─ hero.config.ts             ✅ 物理/渲染/交互常量集中管理
 │  │  └─ hero.ts                    ✅ **核心调度**（输入/循环/休眠/提示/文字抖动/质量自适应/降级）§5–§6
@@ -219,21 +228,33 @@ web/
 - 每个 `[data-jit]` 元素 `transform: translate3d(x*f, y*f, 0)`，`f = parseFloat(data-jit)`（层次感）。`will-change: transform`。
 - 静止判据：`|x|,|y| < 0.02 && |v| < 0.02` 时归零并停止写样式。`prefers-reduced-motion` 下整体关闭。
 
-### 5.11 渲染参数（初值，业主稍后微调）
+### 5.11 参数（初值，业主稍后微调）
+
+**物理参数**（两模式共用；`hero.config.ts` → `HERO_PARAMS` → `softbody.ts` DEFAULT_PARAMS）
 
 | 项 | 值 | 位置 |
 |---|---|---|
 | 物理 `stiff/damp/grip` | 0.06 / 0.45 / 0.6（**高刚度+强阻尼**=硅胶；damp<0.5 是消除拖动"呼吸"振荡的关键） | `softbody.ts` DEFAULT_PARAMS |
 | 蠕变 `creepRate/creepTau/creepFrac` | 0.06 / 90 (≈1.5s) / 0.12（**纯黏性弛豫，无速度项**；tau 越大沟槽留得越久） | 同上 |
-| 形变 `depth/sigma/rim/harden` | 11 / 0.085 / 0.4 / 1.0（σ 默认更大=接触半径更宽；harden=1 抵抗感） | 同上 |
-| 折射 `refract` | 5 | `renderer.ts` DEFAULT_TUNING |
-| 色散 `dispersion` | 0.018 | 同上 |
-| 高光 `light` | 0.18 | 同上 |
-| `zoom` | 0.94 | 同上 |
+| 形变 `depth/sigma/rim/harden` | 11 / 0.1224 / 0.4 / 1.0（σ 已两次 ×1.2 放大；harden=1 抵抗感） | 同上 |
 
-**调参入口**：开发环境（`import.meta.env.DEV`）或 URL 带 `?tune` 时，在 Hero 右上角显示一个轻量调参面板（原生 `<input type=range>`，无库），实时修改上表全部数值并支持"复制当前参数为 JSON"。**生产构建默认不加载面板代码**（动态 `import()`，`?tune` 时才加载，避免增体积）。视觉验收时会用它对手感做最终定参，请把定参结果回写到默认值。
+**渲染参数**（按模式各自持有）
+
+| 模式 | 参数 | 值 | 位置 |
+|---|---|---|---|
+| soft | `refract/dispersion/light/zoom` | 5 / 0.018 / 0.18 / 0.94 | `HERO_RENDER` → `renderer.softTuning` |
+| sand | `grain/spread/scatter/settle/shrink/shadow/zoom` | 见 §5.14.5 | `SAND_PARAMS` → `renderer.sandTuning` |
+
+两个 tuning 对象由调度器持有（**不随模式重建而丢失**），模式实例只引用它们。
+
+**调参入口**：`import.meta.env.DEV` 或 URL 带 `?tune` 时显示面板（原生 `<input type=range>`，无库）。
+面板顶部为「交互模式」分段控件（`沙砾` / `软胶`），参数按当前模式显隐，避免调错组；
+「复制参数 JSON」同时导出物理参数**与两个模式的渲染参数**。
+**生产构建默认不加载面板代码**（动态 `import()`，`?tune` 时才加载）；生产的模式开关是 `VITE_HERO_MODE`。
 
 ### 5.12 降级链
+
+**总链：`sand → soft → static`**（沙砾能力不足 → 软胶 → 无 WebGL 则静态，见 §5.14.3）。
 
 `Renderer.create()` 返回 `null`（无 WebGL / 软件渲染 `failIfMajorPerformanceCaveat` / 着色器失败）→ **静态模式**：
 - `canvas` 隐藏；`.hero-photo` 内插入两层 `.hero-layer`（`background-image` + `background-size:cover`），首张 opacity 1、次张 0。
@@ -244,160 +265,249 @@ web/
 
 ### 5.13 相册轮播（slideshow.ts）
 
-**参数**：`ADVANCE_MS = 5000`、`FADE_MS = 900`（`hero.config.ts`）。
+11 张图（当前 Hero 图第一张，其余按文件名排序）无限循环。
 
-**关键：物理与图片完全解耦。** 高度场不参与图片运算（只用于算 UV 偏移），
-所以换图 / 淡入淡出**对软体特效零影响**，`softbody.ts` 无需任何改动。
+#### 5.13.1 时序：**每张图总共 3 秒**（`CYCLE_MS = 3000`）
 
-**淡入淡出用双纹理 + `uMix`（GPU 混合），不做 JS 合成**：
-- 两张图**共用同一个 `off`**，所以过渡期间形变完全一致（不会“一张在动、另一张不动”）。
-- 光影在 `mix` **之后**统一施加，只算一次；`uMix` 用 uniform 分支，静止态零额外采样。
-- 缓动：`smootherstep`（`t³(t(6t-15)+10)`）—— 线性 crossfade 中段会发灰。
-- 反例（已否决）：JS 逐帧把两张图合成到一个 canvas 再 `texImage2D`，
-  相当于每秒 60 次 1.3MP 纹理上传，手机会卡。
+**过渡时长含在 3 秒之内**，不是额外叠加。
 
-**重活一律放在停留期（性能关键）**：
-`cover` 裁切（`drawImage` 一张 ~1.3MP 图）+ `texImage2D` 上传都在**预载完成时**做（`host.prepare`），
-淡入开始帧只需改一个 uniform + 唤醒循环。实测淡入 934ms / 55 帧 / p50 16.7ms /
-**p95 18.6ms（无掉帧）**。
+> **勘误**：早前实现是「停留 `ADVANCE_MS=3000` + 过渡 `FADE_MS=900`」，
+> 实测相邻切换间隔 **3920ms** —— 也就是「每图 3.9 秒」。
+> 这正是业主反馈的「并不是按照每图3秒的顺序时机来的」。
+> 现在 `advanceMs = CYCLE_MS - FADE_MS`，实测间隔 **3017 / 3025 / 2997 / 3016 / 3015 ms**。
 
-**省电**：停留 5s 用 `setTimeout`，主循环保持休眠（不常驻 rAF）；
-只有淡入的 ~900ms 唤醒循环，结束后自然回到休眠。即每 5s 只唤醒 0.9s。
+#### 5.13.2 过渡：交叉淡入淡出（`mix(A, B, t)`，S 曲线缓动）
 
-**绝不出现空白帧**：每张图展示期间就预载下一张；若到点仍未载好，跳过本轮并在 600ms 后重试。
+`m = 0` 显示 A、`m = 1` 显示 B，中间线性混合后经 `ease()` 缓动。
 
-**暂停条件**（`canAdvance()`）：页面前台 + Hero 在视口内 + 用户未按压。
-- **“真实按压”不能用 `pointers.size` 判定**：鼠标划过照片会留下 hover 指针（目标压力仅 0.16）。
-  必须用单独的 `target===1` 计数（`pressing`），否则鼠标一动轮播就静默停住。
-- 悬停静止（`HOVER_TAIL_MS = 2600`）后允许休眠，否则鼠标停在照片上会让循环永跑 60fps。
-- **指示器容器只拦 `pointerdown`/`touchstart`/`mousedown`/`click`**（防误触软体），
-  **`pointerup` 必须放行**：否则鼠标移向指示器时产生的 hover 指针会永久残留（既卡轮播又永不休眠）。
+> **勘误（两处真实缺陷，业主反馈「淡入淡出后又叠加了直接切换，双切换跳变」）**：
+>
+> 1. **`Renderer.setMix()` 漏转发 `noneMode`**
+>    → `none` 模式的 `uMix` 恒为 0，**完全没有淡入淡出**，
+>    只剩 `commit()` 换槽那一刻的硬切。
+> 2. **`Renderer.commit()` 换槽后没有复位 `uMix`**（**「双切换」的真凶**）
+>    → 落定时 uniform 停在 1，而此时单元0=新图、单元2=旧图，
+>    着色器算的是 `mix(新, 旧, 1)` = **旧图**。
+>    于是切换后整段停留期显示上一张，直到下次 `beginFade` 的 `setMix(0)` 才弹回
+>    新图 —— 观感就是「淡入淡出之后又硬切一下」。
+>
+> 修复：`commit()` 内 `bank.commit()` 之后立刻 `setMix(0)`；`setMix()` 补上
+> `noneMode`。实测 `mix` 逐帧 0.02→0.29→0.56→0.79 平滑推进，
+> 落定后 +0ms 与 +1.2s 画面**差异 0.0%**（无弹回），三个模式一致。
+>
+> **曾一度改成「淡到米色再淡入」（画布 V 形透明度）以规避双重曝光，
+> 但业主反馈该形态「像多加了一次切换」而撤回 —— 真正该修的是上面两个缺陷，
+> 不是过渡形态本身。**
 
-**定时器纪律**：清待触发计时**必须用 `clearDwell()`**（`clearTimeout` + 置 0），
-不可写 `this.timer = 0` —— 那会孤立仍在排队的定时器，表现为“已暂停却又自己切了一张”。
-`goTo()` 也必须先 `clearDwell()`：用户的选择优先于排队的停留计时。
+#### 5.13.3 提示文案只在「有特效」时显示
 
-**预载代数（`gen`）**：落定与指定切换都递增；`onload` 回调带旧代数的直接丢弃。
-否则用户快速连点圆点时，先前发出的预载回调会在新目标就位后回来把 `nextIndex` 改回旧图。
+`VITE_HINT`（「哈哈镜~来戳我」）属于**交互引导**：`none` 无特效模式下画面里
+根本没有可按压的东西，显示它是错误引导。
 
-**降级**：`prefers-reduced-motion` → `fadeMs = 0`（直接落定，无透明度动画）
-且**默认不自动播放**（仍可用播放按钮手动开启）。
+- 判定：`renderer.mode !== 'none'`；`none` 时给 `.hint` 加 `hidden` 属性（不占位）
+- 静态降级路径在更早处就 return，提示保持默认 `opacity: 0`，同样不显示
+- 判定写在**每次要显示的时刻**（延迟浮现、回顶二次浮现），而不是只在初始化时判一次
+  —— 这样之后切模式也不会漏出提示
+- E2E T24：`?mode=none` → `hidden=true, show=false`；`?mode=soft` → 延迟后 `show=true`
 
-**指示器 / 播放按钮**：
-- `.hero-bar` 由 JS 插入 `.hero-photo` 内，位于 Hero 底部（`bottom: 15px + safe-area`）；`.hero-copy` 底部内边距相应加大到 50px 让位。
-- 圆点 8px，激活态拉伸为 20px 胶囊 + **主题绿 `var(--green)`**（与站内「&」分隔符、chip、按钮描边同色）；用 `::after` 把可点区域撑到 44px（左右只扩 3px，避免相邻重叠）。
-  （favicon 与 Loading 页的囍仍为莫兰迪红 `#b4656b`，那是「婚礼」点缀色；指示器属功能性 UI，跟随主题绿。）
-- 无障碍：`role="tablist"` + 每颗 `aria-label="第 N 张照片"` / `aria-selected`；`aria-pressed` / `aria-label` 随播放状态切换。
-- 只有一张图时**完全不显示**任何控件。
-- 诊断钩子：`window.__hero.gallery()` → `{ index, total, mix, fading, autoplay, pressing, canAdvance, visible, docVisible, log }`；`log` 记录每次切换触发原因。
+#### 5.13.4 不变式（保持原有约束）
 
-## 6. 着色器与视觉要点（shaders.ts 已实现，验收关注）
+- **绝不切到未加载的图**：展示期就预载下一张；未就位则 `RETRY_MS=600` 重试。
+- **硬件永远只有 2 张图纹理**（双纹理乒乓，与相册张数无关）。
+- **按压期间不切图**（真实按压计数 `pressing`，hover 指针不算）。
+- 指示器：圆点 + 播放/暂停；只拦「会产生按压」的事件。
+- `prefers-reduced-motion` / `?autoplay=0`：不自动推进。
 
-- 折射：`uv' = uv + slope * uRefract`（从外侧取样 → 内容向凹陷中心收拢，"陷入"感）。若实测方向显得像"鼓包"，把 `off` 取反即可，**以视觉为准**。
-- 光照：法线 `normalize(vec3(-slope*2.4, 1))`，光源左上；漫反射 `.28`、高光 `light=0.18`、凹陷遮蔽 `.006` —— **柔和不抢戏**；凹陷剖面为超高斯（平底陡壁=实体压痕），排挤凸缘为环形（r=σ 峰值）；**静止时画面必须与原图逐像素一致（无偏色/无泛光）**。
-- 凹陷内 `col *= 1 + h*0.010` 做柔和遮蔽。
-- 必要验收：静止帧与直接绘制原图的平均色差 < 2/255（e2e 中做）。
+### 5.14 交互模式（modes/）
 
-## 7. 滚动锁（scrollLock.ts）
+业主需求：**保留现有软体效果作为预设之一**，另增一个粒子（沙砾）交互模式 ——
+图片默认就是原图，按压处沙砾向外扩散，松手拼回原图。
 
-状态：`locked`（默认） / `open`。以 `<html>` 的 class 表示。
+#### 5.14.1 架构
 
-- `html.locked, html.locked body { overflow:hidden; height:100%; }`，`html.locked .hero-photo { touch-action:none; }`，`open` 态 `.hero-photo{touch-action:pan-y}`。
-- `locked` 时在 `#hero` 上注册**非被动**的 `touchmove` 与 `wheel`，`preventDefault()`（兜底 iOS 旧内核）。
-- `.go` 按钮点击：`open` → `requestAnimationFrame` 后 `details.scrollIntoView({behavior:'smooth'})`（不支持 smooth 则直接跳）；记录 `openedAt`。
-- `open` 态监听 `scroll`（passive）：`scrollY <= 1` 且距 `openedAt` > 800ms → 回到 `locked`。
-- 下方页面有固定的"回到封面"小按钮（`scrollTo top`，到顶后自动 lock）。
-- 键盘：locked 时 `Space/PageDown/ArrowDown` 不滚动（overflow hidden 已保证）；`.go` 按钮可用键盘触发，并有 `:focus-visible` 样式与 `aria-label`。
+| 组件 | 职责 |
+|---|---|
+| `modes/types.ts` | `HeroMode` 接口：`id / needsClear / resize / setFieldSize / setMix / draw / reduceQuality / destroy` |
+| `modes/bank.ts` | `TextureBank`（双纹理乒乓，§5.3）+ `FieldTexture`（高度场，单元 1）—— **两模式共用** |
+| `modes/glutil.ts` | program 编译/链接（失败返回 null，由调用方降级） |
+| `modes/soft.ts` | 软胶模式：**现有实现原样搬移，逐像素行为必须与重构前一致** |
+| `modes/sand.ts` | 沙砾模式（新增） |
+| `renderer.ts` | 降为**调度器**：持有 GL 上下文、纹理银行、高度场、绘制尺寸、当前模式 |
 
-## 8. 布局与样式
+调度器对外 API（`show / setIncoming / commit / setMix / setFieldSize / uploadField / resize / draw / maxTextureSize / lost / onRestore`）**保持不变**，因此 `hero.ts` 只需增加两处：模式选择、把 `degrade()` 改为调用 `reduceQuality()`。
 
-**CSS 变量（莫兰迪 + 自然绿）**
+**软体实现完整保留**：`softbody.ts`、软体着色器、`HERO_PARAMS` 全部不动，仅由 `modes/soft.ts` 引用。
+
+#### 5.14.2 模式清单与选择
+
+| 模式 | 说明 | 渲染路径 | 状态 |
+|---|---|---|---|
+| `soft` | 软胶：按压凹陷、拖动沟槽、松手回弹 | WebGL | 可用 |
+| `sand` | 沙砾：按压处像素沙砾向外扩散 | WebGL | **开发中，交互将重构**（见 §5.14.9） |
+| `none` | **无特效**：正常轮播，不做任何形变 | WebGL（纯平铺，`uBed=0`） | **默认** |
+
+**选择优先级**：`?mode=` > `VITE_HERO_MODE` > 默认 `none`。
+白名单校验，拼错**回退默认而不是报错**（线上不该因多余空格而白屏）。
+
+`none` 是**渲染器内的一等模式**（`modes/none.ts`），不是「走静态降级路径」——
+Tuning 面板要在三种模式之间**实时切换对比**，只有同一渲染器内的模式才做得到。
+它复用「整屏平铺 + 可选压暗」的 `BED_VERT`/`BED_FRAG` 并把 `uBed` 固定为 0，
+刻意不另写一份几乎相同的着色器；`zoom = 1`（无内缩，就是正常照片）。
+无 WebGL 时仍回退到 DOM 图层路径（观感一致：都是普通轮播）。
+
+E2E：`?mode=none` 生效、按压无形变（meanDiff **0.000**）、轮播照常前进、
+Tuning 面板列出三种模式且可实时切到 `none`、三种模式互切不泄漏纹理。
+
+> **发布约束**：`sand` 未达发布标准前**不作默认**。业主指示：在沙砾交互
+> 定稿前，默认取最稳的形态（当前为 `none` 无特效）。
+
+#### 5.14.3 核心不变量：静止态 = 原图
+
+朴素粒子系统做不到这件事（要画面看起来是原图需约 130 万颗粒子，手机必崩）。
+本实现用**几何构造**保证，而非调参结果：
+
+- 一张 `GL_POINTS` 网格，一个格子一颗沙砾；
+- 静止位置 = 单元格中心 `((i+.5)*cell, (j+.5)*cell)`，`cell` **必须为正整数**（物理像素）；
+- `gl_PointSize = cell`。
+
+于是沙砾方形脚印的左右边界恰为 `i*cell` 与 `(i+1)*cell` —— **只要 `cell` 是整数，
+这两个边界就是整数**，相邻沙砾严丝合缝地铺满画布，且与画布尺寸是否为 `cell`
+整数倍无关（末列/末行沙砾越界部分被裁掉，但落在视口内的像素中心仍被覆盖）。
+
+> **勘误**：本文档早前版本写的是「`cell` 必须为偶数整数」，**这是错的**
+> （把「整数边界」误推成「偶数」，并因此把粒径下限误钉在 4px）。
+> 实测 60×60 画布下 `cell = 1..8` 的**漏缝像素均为 0，奇偶无关**。
+> 这条放宽解开了粒径下限 —— 细沙才做得出来。
+
+片元按 `uv = 格子中心UV + (gl_PointCoord - 0.5) * cellUV * zoom` 取回该格图像
+⇒ 位移为 0 时画面逐像素还原原图。
+
+**因此 `cell` 必须是正整数**；网格重建时必须校验这一点（单测守护）。
+
+#### 5.14.4 位移：复用现有 SoftField，不新增物理 —— **斥力模型**
+
+高度场纹理已有 `r,g = 斜率`、`b = 高度`（零点 128/255，§5.4a）。沙砾直接读它，**不新增任何物理场**：
+
 ```
---bg:#e9e7e1  --bg-2:#dedbd2  --ink:#3a3d38  --ink-soft:#6b6f68
---green:#6f9a7d  --green-deep:#4f7a60  --line:rgba(58,61,56,.16)
-```
-字体：`font-family: "Noto Serif SC","Songti SC","STSong","Source Han Serif SC",serif`（当前用系统字体；后期视觉阶段再做子集化 webfont，**本阶段不加载任何 webfont**）。
+hn     = clamp((|h|/MAX_H - DEAD) / (1 - DEAD), 0, 1)   // DEAD = 0.02
+outDir = normalize(g)，|g|→0 时退化为随机方向          // 消掉中心奇点
+amt    = spread * cell * hn                             // 幅度以「颗粒直径」为单位
 
-**移动端（默认）**
-- `#hero{position:relative; height:100vh; height:100svh; overflow:hidden;}`（`100dvh` 作为增强，`@supports`）
-- `.hero-photo{position:absolute; inset:0; background-size:cover; background-position:50% 40%;}`（LQIP 作为底图，canvas 就绪后 `opacity 0→1`，300ms）。
-- `.hero-scrim`：底部 0→55% 高度的 `linear-gradient(transparent, rgba(30,34,30,.55))`。
-- `.hero-copy`：`position:absolute; inset:0; display:flex; flex-direction:column; justify-content:flex-end; padding:0 24px calc(28px + env(safe-area-inset-bottom)); color:#f4f2ea; pointer-events:none`。`.go{pointer-events:auto}`。
-- 排版：kicker 13px 字距 .3em；names 40–48px 字重 500、行距 1.15，姓名间 "&" 用 `--green` 的浅色；date 大号数字 `2026.10.18` + 星期，细线分隔；`.go` 为玻璃质感圆角胶囊（`backdrop-filter` 若不支持则纯半透明），箭头做 2s 循环轻微上下浮动（`transform`，且 reduced-motion 关闭）。
-- `.hint`：位于照片上部 18%，12px，白 70%，`animation` 淡入淡出。
-
-**桌面端 `@media (min-width:900px) and (min-aspect-ratio:1/1)`**
-- `#hero{display:grid; grid-template-columns: min(42vw, 78svh) 1fr;}`
-- `.hero-photo` 变为 grid 左列（`position:relative`，全高），无 scrim。
-- `.hero-copy` 变为右列：`justify-content:center; padding: 0 8vw; color:var(--ink); background:var(--bg)`；names 可放大至 `clamp(56px, 5.2vw, 88px)`；`.go` 在该列内下方，深色文字 + 绿色描边。
-- 该布局下 `.hero-photo` 宽高比接近竖版 ~0.72；`cols=96` 网格逻辑不变。
-
-**无障碍**：`<h1>` 为姓名；`prefers-reduced-motion` 关闭抖动/引导/浮动；对比度 ≥ 4.5:1（移动端文字在 scrim 上）。
-
-## 9. 内容与下方信息区
-
-**`src/config.ts`**（唯一内容数据源，全部为**占位文案**，业主后续提供真实信息；占位处用【占位】字样在 README 标注）：
-
-```ts
-export const site = {
-  title, description, siteUrl: import.meta.env.VITE_SITE_URL ?? '',
-  couple: { groom: '陈北辰', bride: '林知夏' },            // 占位
-  dateISO: '2026-10-18T11:30:00+08:00', dateText: '2026.10.18', weekday: '星期日', timeText: '11:30 入席',
-  venue: { name, address, lat, lng, hotelPhone? },         // 占位，含 gcj02 坐标
-  hero: { focal: { x: .5, y: .4 } },
-  howToGet: [{ icon, title, text }, …],                    // 自驾/地铁/高铁/停车
-  schedule: [{ time, title, text }, …],                    // 当日流程
-  closing: '期待与你相见',
-};
-```
-
-**details.ts 渲染的区块**（垂直顺序）：
-1. **时间**：大号日期/时刻 + "距离婚礼还有 N 天"（婚礼当天及之后显示"今天/已完成"文案）。
-2. **地点**：场地名称、地址；按钮 ×3：`高德地图导航`、`腾讯地图导航`、`复制地址`。
-   - 高德：`https://uri.amap.com/marker?position=${lng},${lat}&name=${enc(name)}&coordinate=gaode&callnative=1`
-   - 腾讯：`https://apis.map.qq.com/uri/v1/marker?marker=coord:${lat},${lng};title:${enc(name)};addr:${enc(address)}&referer=wedding`
-   - 复制：`navigator.clipboard.writeText`，失败回退 `document.execCommand('copy')`；成功显示 1.6s 的底部 toast"地址已复制"。
-3. **如何前往**：卡片列表。
-4. **当日流程**：竖向时间轴（绿色节点）。
-5. **结语 + 回到封面按钮**。
-
-**入场动画**：`IntersectionObserver`（threshold .15）给区块加 `.in`：`opacity 0→1 + translateY(16px→0)`，仅执行一次；reduced-motion 直接显示。卡片交错 60ms。
-**样式**：莫兰迪底色分段（`--bg` / `--bg-2` 交替），绿色仅用于强调（按钮、节点、标题下短线）。此阶段做到"整洁、克制、可用"即可。
-
-## 10. 构建、缓存、部署
-
-**vite.config.ts**
-- 自定义 `transformIndexHtml` 插件：替换 `__LQIP__`（来自 `src/generated/hero-meta.json`）、`__TITLE__`、`__DESC__`、`__OG_IMAGE__`、`__SITE_URL__`（env `VITE_SITE_URL`，空则用相对路径并在 README 提示 **微信分享图必须为绝对 URL**）。
-- `build.target='es2019'`；`build.cssCodeSplit=false`；`assetsInlineLimit=0`（图片不内联）；无 sourcemap。
-- 调参面板走动态 import，自然拆分为独立 chunk。
-
-**index.html `<head>` 必备**
-`viewport`（含 `viewport-fit=cover, maximum-scale=1`）、`theme-color`、`og:title/description/image/type/url`、`format-detection: telephone=no`、favicon、内联的 loader 与首屏关键 CSS（背景色 + loader 样式）、`<meta name="x5-fullscreen" content="true">` 无需。
-
-**public/_headers**
-```
-/assets/*
-  Cache-Control: public, max-age=31536000, immutable
-/
-  Cache-Control: public, max-age=0, must-revalidate
-/og.jpg
-  Cache-Control: public, max-age=86400
+disp = outDir * amt                                     // 主项：向外推开
+     + randDir(seed) * scatter * amt                    // 打散（占主项比例）
+     + randDir(seed) * settle  * amt * sin(9t + seed*41) // 涌动（占主项比例）
 ```
 
-**Cloudflare Pages 设置**：框架 None；构建命令 `npm run build`；输出目录 `dist`；环境变量 `VITE_SITE_URL=https://你的域名`；Node 20+。
+**这是斥力模型**（对应「像吸铁石铁屑同极互斥」）：梯度 `g` = 最陡上升 =
+背离凹陷中心 ⇒ 沙砾向外推；幅度由深度 `hn` 驱动（中心最大、向外衰减）
+⇒ 越靠近按压点越推开，中心露出底色。
 
-## 11. 微信/iOS/Android 兼容清单（实现时逐项确认）
+- **死区（DEAD = 0.02）是必须的**：没有它，`h` 的指数衰减尾巴会让沙砾
+  永远在微小抽动，画面回不到逐像素原图 —— 实测松手 3.2s 后仍有 **7.9%** 缝隙。
+  加死区后回到静止基线、与静止帧 meanDiff **0.000**。
+  阈值仅占总高度 2%（≈亚像素位移），不会造成可见的“硬切”。
+- **所有项都乘 `hn`**：位移与深度同收敛，松手后自然归零。
+- **幅度必须以颗粒直径为单位**（`spread * cell`）⇒ 与分辨率无关：粒径加倍则
+  位移同步加倍，视觉始终是「颗粒推开 N 个自身直径」。**`spread` 必须小**（默认 3）。
+  > **勘误**：早期版本用固定像素（`spread=42`）导致位移达粒径 7 倍，
+  > 原图彻底解体成噪声 —— 这就是“非常粗糙”的根因之一。
+- 无 ∇² 耦合、无波动传播（遵守 §5.4a）。
+- 随机项两个作用：打散成自然的云雾而非干净圆环；消掉「中心位移恰为 0」的奇点。
+- `gl_PointSize = cell * (1 - shrink * ...)`，**`shrink` 默认 0（关闭）**：
+  颗粒是格子内切的、天然不重叠，一缩小反而制造碎片缝隙。
+  > **勘误**：早期版本 `shrink=0.5`，位移后方块缩成不规则小块，留下蠕虫状
+  > 亮纹 —— 这是“白色沙粒”错觉的第二个根因。
+- 片元按 `shadow` 随位移压暗（纵深）。
+- 涌动项仅在 `hn > 0` 时活跃；循环休眠时 `h = 0` → **静止态无任何动画**（§5.8）。
 
-- `touch-action:none` 仅 locked 态；配合非被动 `touchmove preventDefault` 兜底。
-- 全屏高度用 `100svh`（回退 `100vh`）；不要依赖 `window.innerHeight` 做布局。
-- iOS 内存：纹理 ≤1600px；不使用 mipmap/NPOT 以外特性；上传后释放对离屏 canvas 之外的大对象引用。
-- `webglcontextlost` 必须 `preventDefault` 并支持恢复（已在 renderer 实现）。
-- 不使用 `createImageBitmap`（旧 WKWebView 不稳），用 `Image`。
-- 不使用 `OffscreenCanvas`、`ResizeObserver` 缺失时回退 `window.resize`。
-- 微信内点击链接跳转地图用 https 链接（已选），不用 `androidamap://` 之类 scheme。
-- `-webkit-tap-highlight-color: transparent`；`user-select:none` 于 Hero；禁用长按图片菜单（`-webkit-touch-callout:none`）。
+**恢复是免费的**：松手后 `h` 按现有弹性+蠕变回落 → `disp → 0` → 沙砾自动拼回原图。
+沙砾**无独立状态、无粒子池、不产生 GC**；多指按压与拖动沟槽沿用 §5.4a/§5.5 的
+胶囊接触与 smooth union，无需另写实现。
 
-## 12. 验收（全部通过才算完成）
+**关键实现约束**：顶点着色器必须用**格子中心**（`floor(uv/cellUv)+0.5`）取字段，
+**不能用沙砾自身位置** —— 否则位移会反馈进采样点造成自激。
+
+#### 5.14.5 能力检测与降级
+
+沙砾模式需两项能力，创建前必须检测；任一不满足则回退 `soft` 并 `console.info` 说明原因：
+
+| 能力 | 查询 | 为何需要 |
+|---|---|---|
+| 顶点纹理取样（VTF） | `MAX_VERTEX_TEXTURE_IMAGE_UNITS >= 1` | WebGL1 **不保证 > 0**；沙砾在顶点着色器读高度场 |
+| 点尺寸上限 | `ALIASED_POINT_SIZE_RANGE[1] >= cell` | 规范只保证 ≥ 1，个别驱动上限极小 |
+
+`?mode=sand` 显式指定但能力不足时同样静默回退，不报错、不白屏。
+（若日后实测发现大量设备卡在第二项，再补「每颗两个三角形」的备选路径；当前不做。）
+
+#### 5.14.6 性能
+
+| 项 | 值 |
+|---|---|
+| draw call | **1 次** `drawArrays(POINTS)` |
+| 粒子数 | `ceil(W/cell) * ceil(H/cell)`（780×1688、cell=6 → 36,660） |
+| 顶点缓冲 | 静态，仅上传一次（`home` 2×f32 + `seed` 1×f32 ≈ 440KB） |
+| 顶点开销 | 每颗 1 次字段纹理取样 |
+| 片元开销 | ≈ 一次全屏量级覆盖（与软体模式相当，且省掉法线/高光计算） |
+| 纹理单元 | 不变（0=当前图 1=高度场 2=淡入目标） |
+
+**清屏**：沙砾模式必须每帧 `clear`（缝隙露出底色）；软体模式全屏覆盖，
+`needsClear=false` 跳过清屏，不因新模式而变慢。
+
+`reduceQuality(step)`（§5.9 质量自适应调用）：
+- `soft`：`step1` → `dispersion = 0`（省 2 次采样）
+- `sand`：`step1` → `grain *= 2`（粒子数降至 1/4）；`step2` → 同时关闭涌动与随机打散
+
+#### 5.14.7 沙砾参数（`SAND_PARAMS`，`hero.config.ts`）
+
+全部**无量纲 / 以 CSS 像素表达**，与分辨率无关。
+
+| 键 | 默认 | 范围 | 含义 |
+|---|---|---|---|
+| `grain` | **1.5** | 1–6 | 颗粒边长（**CSS 像素**）。粒径必须用 CSS 像素而非物理像素 |
+| `spread` | **6** | 0–8 | 主项幅度（**颗粒直径的倍数**） |
+| `scatter` | **0.06** | 0–1 | 随机项幅度（占主项的比例）。**必须小** |
+| `settle` | **0.03** | 0–0.6 | 涌动幅度（占主项的比例） |
+| `shrink` | **0** | 0–0.7 | 位移致颗粒收缩比例。**默认关闭** |
+| `shadow` | **0.15** | 0–0.6 | 位移致压暗比例 |
+| `bed` | **0.62** | 0–0.9 | 缝隙底图压暗比例（见 §5.14.8） |
+| `zoom` | **0.94** | 0.85–1 | 采样内缩（与软体同值） |
+
+#### 5.14.7b 实测数据（不是“应该没问题”）
+
+| 指标 | 实测 | 门槛 | 状态 |
+|---|---|---|---|
+| 静止态 vs 原图（`refDataURL`） | meanDiff **0.001** | < 3 | ✅ |
+| 沙粒均色 vs 原图均色 | 色差 **8.9** | < 12 | ✅ |
+| 缝隙占比 | 14.6%（重构前曾达 45%） | < 30% | ✅ |
+| 松手 3.2s 后 vs 静止 | meanDiff **0.000** | < 3 | ✅ |
+| 四角占比变化 | 0.00% → 0.00% | < 1% | ✅ |
+| 喷散期帧间隔 p95（146k 颗粒） | **17.6 ms** | < 25 | ✅ |
+| 反复切模式后 `createTexture` 计数 | 3 → **3** | 不增长 | ✅ |
+| 粒子数（1.5 CSSpx，DPR1 / DPR2） | 82,290 / 146,380 | — | — |
+| 可见变化率 | 12.1% | 阈值待定 | ⏸ 交互重构中 |
+
+最后一行按业主指示暂缓定阈值：沙砾交互将整体换方向（§5.14.9），
+「散开该有多明显」是新交互的美学参数。**其余正确性门槛仍为硬断言。**
+
+#### 5.14.8 缝隙底色：**变暗的原图**，不是纯色底
+
+缝隙底下铺一层**随扰动深度压暗的原图**（`bed` pass，一个整屏 quad）。
+沙被推开得越多，露出的底越暗 —— 像沙投下的影子。
+
+> **勘误**：早前定的是纯米色 `--bg`。实测在深色照片区（西装）45% 的浅色缝隙
+> 连成迷宫状亮纹，**被眼睛读成「白色沙粒」** —— 业主明确否决。
+> 改为压暗原图后，缝隙永远是原图色调，白砂错觉从构造上消除。
+
+#### 5.14.9 沙砾模式：待重构（业主 2026-06 指示）
+
+现有「斥力扩散」方向效果不达预期。业主给出新方向：
+
+- **默认就是沙画形式展示**（不是「原图 → 变成沙」）；
+- 鼠标 / 触摸像**在沙子上滑动**（划过处被犁开、堆到两侧），
+  而不是「同极互斥式向外炸开」；
+- 参考交互：<https://sand.scottsun.io/>
+
+**重构前不改沙砾渲染代码**；`soft` 保持默认。重构时须重写本节与 §5.14.3–5.14.7。
 
 ### 12.1 命令级
 ```
@@ -424,6 +534,22 @@ npm run build                  # 成功；输出 gzip 大小
 12. **无自动交互**：无任何输入时，静止后连续两帧截图逐像素一致（meanDiff < 0.5），不出现自动演示/自动形变。
 13. **多点按压**：两个相距 ~2.5σ 的凹陷之间**隆起**（中点高度为正），且无折痕（沿两中心连线的高度剖面 C¹ 连续）。
 
+> **用例 3–7、11–13 为软胶模式专属**：必须以 `?mode=soft&autoplay=0` 运行。
+> （模式改了参照物就变了；像素类断言必须固定模式与画面）
+
+#### 12.2b 沙砾模式（`?mode=sand`）
+
+14. **模式选择**：`?mode=sand` 生效沙砾、`?mode=soft` 生效软胶、非法值静默回退默认；
+    `window.__hero.debug().mode` 反映**实际生效**模式（能力不足回退时也如实反映）。
+15. **静止一致性**：静止截图与 `refDataURL()` 平均色差 **< 3/255**
+    （比软体的 2 略宽：分块双线性重采样本身有微小误差；不达标就减小 `grain`）。
+16. **按压确实散开**：按压区「米色底像素占比」由 ~0 升至 **>5%** —— 直接量出缝隙，不靠主观。
+17. **松手拼回**：`pointerup` 后 2.5s 内该占比回落至 **<1%**。
+18. **局部性**：四角米色底像素占比基本不变（与静止时差值 <1%）。
+19. **喷散期性能**：帧间隔 **p95 < 25ms**（与轮播淡入同一口径）。
+20. **切换不泄漏**：`sand ↔ soft` 连续切换若干次后 `createTexture` 调用数不再增长
+    （上下文丢失重建除外）。
+
 ### 12.3 手动验收（业主执行，实现者提供说明）
 - iPhone 微信 / Android 微信打开预览链接：60fps 主观流畅；地址栏伸缩不导致重置；在 Hero 上下滑不会滚页；点按钮才进入下方。
 - 提供 `?tune` 调参面板，业主调出满意手感后，实现者将参数写回默认值。
@@ -437,10 +563,21 @@ npm run build                  # 成功；输出 gzip 大小
 | P2 | `scrollLock.ts` + `config.ts` + `details.ts` + 桌面布局 | 12.2 用例 8、9 |
 | P3 | 调参面板（`?tune`）+ `e2e.mjs` + 体积校验 + README + `_headers` + `.gitignore` | 12.1 / 12.2 全绿 |
 | P4 | 交付：`git init` 提交、README 三段说明、业主试玩后按反馈调参 | 业主验收 |
+| P5 | **相册轮播**（§5.13）：资产管线 + 双纹理淡入 + 指示器/播放按钮 | 12.2b 之外的 T13 全绿 |
+| P6 | **交互模式**（§5.14）：模式架构抽取 + 沙砾模式 + 面板分段控件 | §12.2b 全绿，且软胶用例 3–7/11–13 不回退 |
 
 ## 14. 明确不做（本阶段）
 
-背景音乐、微信 JS-SDK 定制分享、webfont 子集化、相册、多语言、PWA/离线。
+背景音乐、微信 JS-SDK 定制分享、webfont 子集化、多语言、PWA/离线。
+
+**不引入粒子/图形库**：沙砾模式用自写着色器（~150 行）。
+理由：PixiJS / three.js 等会引入 **+100~600KB gzip**，而首屏 JS 预算是 30KB（当前 19.7KB）；
+且它们（作为通用粒子系统）同样给不了 §5.14.3 要求的「静止态 = 逐像素原图」。
+**引入库无法解决核心问题，只会爆预算。**
+
+**沙砾不做真实粒间互斥（n² 碰撞）**：以高度场梯度 + 每颗随机项近似，
+视觉上已是「向外散开」，且保持 O(1) 每颗。
+真做逐对互斥在万级粒子下必卡（也违背 §5.14.6 的性能约束）。
 
 **加入日历**：不做。Web 无法可靠地跳转到手机原生日历并预填事件 ——
 iOS Safari 不开放该能力；微信内置浏览器拦截外部 scheme；

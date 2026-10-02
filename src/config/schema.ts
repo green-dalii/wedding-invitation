@@ -43,7 +43,20 @@ export interface CopyInfo {
 }
 
 /** 封面图裁切焦点（0~1，CSS object-position 语义） */
+/** Hero 交互模式（§5.14.2） */
+export type HeroMode = 'sand' | 'soft' | 'none';
+export const HERO_MODES: readonly HeroMode[] = ['sand', 'soft', 'none'];
+export const isHeroMode = (v: unknown): v is HeroMode =>
+  typeof v === 'string' && (HERO_MODES as readonly string[]).includes(v);
+
 export interface HeroInfo {
+  /**
+   * 交互模式：
+   * - `none` 无特效：正常轮播，不做任何按压/拖动形变（**默认**）
+   * - `soft` 软胶：按压凹陷、拖动沟槽、松手回弹
+   * - `sand` 沙砾：沙砾扩散（开发中，交互将重构，不作默认）
+   */
+  mode: HeroMode;
   focal: { x: number; y: number };
 }
 
@@ -131,7 +144,7 @@ export const DEFAULTS: SiteConfig = {
     goButton: '查看详情',
     hint: '哈哈镜~来戳我',
   },
-  hero: { focal: { x: 0.5, y: 0.4 } },
+  hero: { mode: 'none', focal: { x: 0.5, y: 0.4 } },
   howToGet: [
     { icon: '🚗', title: '自驾', text: '导航至婚礼场地，凭请柬免费停车。' },
     { icon: '🚇', title: '地铁', text: '请填写地铁线路与步行距离。' },

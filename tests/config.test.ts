@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { resolveSite, SCALAR_ENV_KEYS, ARRAY_ENV_KEYS } from '../src/config/resolve';
+import { resolveSite, SCALAR_ENV_KEYS, ARRAY_ENV_KEYS, HERO_MODE_ENV } from '../src/config/resolve';
 import { DEFAULTS } from '../src/config/schema';
 
 describe('配置解析（环境变量 → 站点配置）', () => {
@@ -94,14 +94,15 @@ describe('配置解析（环境变量 → 站点配置）', () => {
     const dts = readFileSync('src/vite-env.d.ts', 'utf8');
     const declared = [...dts.matchAll(/VITE_[A-Z0-9_]+/g)].map((m) => m[0]);
     const jsonVar = 'VITE_SITE_JSON';
-    const handled = new Set([...SCALAR_ENV_KEYS, ...ARRAY_ENV_KEYS, jsonVar]);
+    // HERO_MODE_ENV 是联合类型变量（走白名单校验而非 SCALAR_ENV），单独计入
+    const handled = new Set([...SCALAR_ENV_KEYS, ...ARRAY_ENV_KEYS, jsonVar, HERO_MODE_ENV]);
     const missing = [...new Set(declared)].filter((k) => !handled.has(k));
     expect(missing).toEqual([]);
   });
 
   it('.env.example 与解析器变量集保持同步', () => {
     const example = readFileSync('.env.example', 'utf8');
-    const known = new Set([...SCALAR_ENV_KEYS, ...ARRAY_ENV_KEYS, 'VITE_SITE_JSON']);
+    const known = new Set([...SCALAR_ENV_KEYS, ...ARRAY_ENV_KEYS, 'VITE_SITE_JSON', HERO_MODE_ENV]);
     const documented = [...example.matchAll(/^#?\s*(VITE_[A-Z0-9_]+)=/gm)].map((m) => m[1]);
     const undocumented = [...known].filter((k) => !documented.includes(k));
     expect(undocumented).toEqual([]);

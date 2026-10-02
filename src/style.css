@@ -555,6 +555,19 @@ html:not(.locked) .back-top { opacity: 1; visibility: visible; transform: none; 
 #tune-panel .tune-label { opacity: .85; margin-bottom: 2px; }
 #tune-panel input[type="range"] { width: 100%; accent-color: #8fc3a3; }
 #tune-panel .tune-foot { padding: 10px 12px; border-top: 1px solid rgba(255,255,255,.12); }
+/* 交互模式分段控件（§5.14） */
+#tune-panel .tune-modes {
+  display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.12);
+}
+#tune-panel .tune-mode {
+  flex: 1; padding: 6px 0; font-size: 12px; letter-spacing: .06em; color: #e9ede8;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.16);
+  border-radius: 7px; cursor: pointer; transition: background .18s, border-color .18s;
+}
+#tune-panel .tune-mode:hover { background: rgba(255,255,255,.14); }
+#tune-panel .tune-mode.on { background: #6f9a7d; border-color: #6f9a7d; color: #fff; }
+#tune-panel .tune-mode[disabled] { opacity: .4; cursor: not-allowed; text-decoration: line-through; }
+#tune-panel .tune-note { padding: 6px 12px; font-size: 11px; line-height: 1.5; color: #f0c9a0; }
 #tune-panel .tune-copy {
   width: 100%; padding: 7px; font-size: 11px; cursor: pointer;
   background: #6f9a7d; color: #fff; border: none; border-radius: 8px;

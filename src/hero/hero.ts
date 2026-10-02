@@ -4,6 +4,7 @@
  */
 import { SoftField, DEFAULT_PARAMS } from './softbody';
 import { Renderer } from './renderer';
+import type { ModeId } from './modes/types';
 import { loadImage, supportsWebp } from './loader';
 import { Slideshow, type GalleryImage, type SlideshowHost } from './slideshow';
 import { HERO_CONST as C } from './hero.config';
@@ -46,6 +47,10 @@ const JIT_LIMIT = C.JIT_LIMIT;
 
 export interface HeroDebug {
   mode: 'gl' | 'static';
+  /** 实际生效的交互模式（沙砾能力不足时回退为 soft） */
+  interaction: ModeId;
+  /** 沙砾颗粒统计（软胶模式为 null） */
+  grains: { grains: number; cell: number } | null;
   awake: boolean;
   frames: number;
   fps: number;
@@ -109,6 +114,11 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   const debugOn = import.meta.env.DEV || params.has('debug');
   // ?autoplay=0：停掉自动轮播（E2E 需要可复现的静态画面）
   const autoplayOff = params.get('autoplay') === '0';
+  // 交互模式选择：?mode= 优先于 VITE_HERO_MODE（非法值忽略，回退配置默认）
+  const modeParam = params.get('mode');
+  // 'none' = 无特效：正常轮播、不做形变（GL 内的纯平铺模式，可与其他模式实时切换）
+  const wantMode: ModeId =
+    modeParam === 'sand' || modeParam === 'soft' || modeParam === 'none' ? modeParam : site.hero.mode;
 
   // ---- 尺寸与网格 ----
   let cssW = 1, cssH = 1, cell = 1, cols = COLS, rows = 1;
@@ -144,7 +154,13 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   let currentImg: HTMLImageElement | null = null;
   /** 备用槽里等待淡入的图 */
   let pendingImg: HTMLImageElement | null = null;
+  /** 当前轮播（在 renderer 就绪后创建） */
   let slideshow: Slideshow | null = null;
+  /**
+   * 渲染器。**必须提前声明**：静态降级会在赋值之前 return，
+   * 但 exposeDebug() 的闭包仍会访问它 —— 用 const 会在静态模式下抛 TDZ。
+   */
+  let renderer: Renderer | null = null;
 
   function measure(): void {
     const r = photo!.getBoundingClientRect();
@@ -177,7 +193,7 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
 
   // 轮播选项（延后创建实例：需要 renderer / drawDirty / wake 已就绪）
   const slideshowOpts = {
-    advanceMs: C.ADVANCE_MS,
+    advanceMs: Math.max(0, C.CYCLE_MS - (reduced ? 0 : C.FADE_MS)), // 总时长 − 过渡 = 停留
     // reduced-motion：不做透明度动画，切换直接落定
     fadeMs: reduced ? 0 : C.FADE_MS,
     // reduced-motion：默认不自动播放，但用户仍可用播放按钮手动开启
@@ -199,7 +215,7 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
     return;
   }
 
-  const renderer = Renderer.create(canvas, { allowSoftware: glFlag === 'force' });
+  renderer = Renderer.create(canvas, { allowSoftware: glFlag === 'force', mode: wantMode });
   if (!renderer) {
     enterStatic();
     return;
@@ -491,8 +507,29 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   // ---- 提示文案（§5.8 修订：不播放任何自动交互演示） ----
   let userTouched = false;
 
+  /**
+   * 提示只在**有特效**的模式下才有意义。
+   * 无特效模式（§5.14.2 `none`）画面里根本没有可按压的东西，
+   * 「哈哈镜~来戳我」是错的引导。
+   * 静态降级路径更早就 return 了，走不到这里 —— 那边提示保持默认的 opacity:0。
+   */
+  function hintEnabled(): boolean {
+    return !!renderer && renderer.mode !== 'none';
+  }
+
   function hideHint(): void {
-    hintEl?.classList.remove('show');
+    hintEl?.classList.remove('show', 'again');
+  }
+
+  function showHint(): void {
+    if (!hintEnabled()) return;
+    hintEl?.classList.add('show');
+  }
+
+  /** 二次访客的极淡再现（见下方 back-top 触发点） */
+  function showHintAgain(): void {
+    if (!hintEnabled()) return;
+    hintEl?.classList.add('show', 'again');
   }
 
   function onFirstTouch(): void {
@@ -500,7 +537,10 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
     hideHint();
   }
 
-  setTimeout(() => { if (!userTouched) hintEl?.classList.add('show'); }, C.HINT_DELAY);
+  if (!hintEnabled()) hintEl?.setAttribute('hidden', '');
+  setTimeout(() => {
+    if (!userTouched) showHint();
+  }, C.HINT_DELAY);
   setTimeout(hideHint, C.HINT_FADE);
 
   // 提示不能只出现一次：淡出后，用户主动点「回到封面」时以极淡样式再浮现一次。
@@ -508,7 +548,7 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
   // 触发点用 .back-top 而非滚动监听：Hero 有滚动锁，回到封面必须走这个按钮。
   document.addEventListener('click', (e) => {
     if ((e.target as HTMLElement | null)?.closest?.('.back-top') && !userTouched) {
-      window.setTimeout(() => hintEl?.classList.add('show', 'again'), 650);
+      window.setTimeout(showHintAgain, 650);
     }
   });
 
@@ -572,9 +612,9 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
 
   function degrade(): void {
     level++;
-    if (level === 1) {
-      renderer!.tuning.dispersion = 0;
-    } else {
+    // 降什么由模式自己决定：软胶关色散（省 2 次采样）/ 沙砾加大颗粒（粒子数降至 1/4）
+    renderer!.reduceQuality(level);
+    if (level >= 2) {
       renderScale = Math.max(1, renderScale * 0.8);
       renderer!.resize(Math.round(cssW * renderScale), Math.round(cssH * renderScale));
     }
@@ -654,6 +694,10 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
     w.__hero = {
       debug: (): HeroDebug => ({
         mode,
+        // 静态降级下 renderer 仍为 null（且没有交互模式）——必须空判，
+        // 否则静态模式下调用 debug() 会抛 TDZ/空引用，直接弄挂 T10。
+        interaction: renderer ? renderer.mode : 'none', // 静态/无特效路径：没有形变交互
+        grains: renderer ? renderer.grainStats : null,
         awake: !!rafId,
         frames,
         fps: Math.round(1 / emaDt),
@@ -676,7 +720,23 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
       }),
       // 仅 ?debug：诊断/隔离实验用（关闭折射、高光等定位伪影来源）
       setTuning: (t: Partial<{ refract: number; dispersion: number; light: number; zoom: number }>) => {
-        Object.assign(renderer!.tuning, t);
+        if (!renderer) return;
+        Object.assign(renderer.softTuning, t);
+        drawDirty = true;
+        wake();
+      },
+      /** 仅 ?debug：对比沙砾参数变体 / E2E 固定手感 */
+      setSand: (t: Partial<Record<string, number>>) => {
+        if (!renderer) return;
+        Object.assign(renderer.sandTuning, t);
+        if ('grain' in t) renderer.refresh();
+        drawDirty = true;
+        wake();
+      },
+      /** 仅 ?debug：切换交互模式 */
+      setMode: (id: ModeId) => {
+        if (!renderer) return;
+        renderer.setMode(id);
         drawDirty = true;
         wake();
       },
@@ -690,7 +750,7 @@ export async function initHero(opts: { onProgress?: (loaded: number, total: numb
         c.width = Math.round(cssW);
         c.height = Math.round(cssH);
         const g = c.getContext('2d')!;
-        const z = renderer!.tuning.zoom;
+        const z = renderer ? renderer.zoom : 1;
         g.drawImage(tex, tex.width * (1 - z) / 2, tex.height * (1 - z) / 2, tex.width * z, tex.height * z, 0, 0, c.width, c.height);
         return c.toDataURL('image/png');
       },

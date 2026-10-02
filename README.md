@@ -73,6 +73,7 @@ VITE_SITE_URL=https://your-domain.example
 | `VITE_CLOSING` | string | `copy.closing` | 结语 |
 | `VITE_GO_BUTTON` | string | `copy.goButton` | 封面按钮 |
 | `VITE_HINT` | string | `copy.hint` | 交互提示 |
+| `VITE_HERO_MODE` | `none` \| `soft` \| `sand` | `hero.mode` | Hero 交互模式。`none`=无特效（**默认**，正常轮播）、`soft`=软胶、`sand`=沙砾 |
 | `VITE_HERO_FOCAL_X` | number | `hero.focal.x` | 封面裁切焦点 0~1 |
 | `VITE_HERO_FOCAL_Y` | number | `hero.focal.y` | 封面裁切焦点 0~1 |
 | `VITE_HOWTOGET_JSON` | JSON 数组 | `howToGet` | 「如何前往」四格（整体替换） |

@@ -21,6 +21,8 @@ interface ImportMetaEnv {
   readonly VITE_CLOSING?: string;
   readonly VITE_GO_BUTTON?: string;
   readonly VITE_HINT?: string;
+  /** Hero 交互模式：sand（沙砾，默认）| soft（软胶）。非法值回退默认 */
+  readonly VITE_HERO_MODE?: string;
   readonly VITE_HERO_FOCAL_X?: string;
   readonly VITE_HERO_FOCAL_Y?: string;
   /** 整块 JSON 覆盖（用于流程 / 交通等数组字段） */

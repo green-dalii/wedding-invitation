@@ -11,7 +11,7 @@
  * **只存在于使用者的部署环境（Cloudflare Pages Dashboard / 本地 .env），
  * 而不进入开源仓库的 Git 历史**。详见 README「隐私边界」一节。
  */
-import { DEFAULTS, type DeepPartial, type EnvRecord, type SiteConfig } from './schema';
+import { DEFAULTS, isHeroMode, type DeepPartial, type EnvRecord, type SiteConfig } from './schema';
 
 /** 标量环境变量 → 配置路径 */
 const SCALAR_ENV: ReadonlyArray<readonly [string, readonly string[], 'string' | 'number']> = [
@@ -49,6 +49,9 @@ const ARRAY_ENV: ReadonlyArray<readonly [string, readonly string[]]> = [
 /** 标量环境变量名清单（供文档与配置生成脚本复用，避免三处维护） */
 export const SCALAR_ENV_KEYS: readonly string[] = SCALAR_ENV.map(([k]) => k);
 export const ARRAY_ENV_KEYS: readonly string[] = ARRAY_ENV.map(([k]) => k);
+
+/** Hero 交互模式变量（联合类型，需白名单校验，故不走 SCALAR_ENV） */
+export const HERO_MODE_ENV = 'VITE_HERO_MODE';
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -126,6 +129,15 @@ export function resolveSite(env: EnvRecord = {}, overrides?: DeepPartial<SiteCon
     }
     if (!Array.isArray(parsed)) throw new Error(`${key} 必须是 JSON 数组，如 [{"title":"自驾"}]`);
     writePath(cfg as unknown as Record<string, unknown>, path, parsed);
+  }
+
+  // ②c 交互模式：联合类型，需白名单校验。
+  // 拼错时**回退默认而不是抛错** —— 线上不该因为一个多余空格就白屏。
+  const rawMode = env[HERO_MODE_ENV];
+  if (typeof rawMode === 'string' && rawMode.trim()) {
+    const m = rawMode.trim().toLowerCase();
+    if (isHeroMode(m)) cfg.hero.mode = m;
+    else console.warn(`[config] ${HERO_MODE_ENV}="${rawMode}" 不是 sand|soft|none，已回退 "${cfg.hero.mode}"`);
   }
 
   // ③ 代码级覆盖
